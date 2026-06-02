@@ -59,6 +59,22 @@ class TruthSocialConfig:
 
 
 @dataclass
+class KalshiThresholds:
+    large_bet_contracts: float
+    odds_move_pct_5min: float
+    volume_spike_multiplier: float
+    min_absolute_volume: float
+
+
+@dataclass
+class KalshiConfig:
+    poll_interval_seconds: int
+    api_base_url: str
+    tracked_event_tickers: List[str]
+    thresholds: KalshiThresholds
+
+
+@dataclass
 class PolymarketThresholds:
     large_bet_usd: float
     new_wallet_age_days: int
@@ -144,6 +160,7 @@ class DashboardConfig:
 class Config:
     truth_social: TruthSocialConfig
     polymarket: PolymarketConfig
+    kalshi: KalshiConfig
     futures: FuturesConfig
     alerts: AlertsConfig
     database: DatabaseConfig
@@ -206,6 +223,22 @@ def _parse_truth_social(data: Dict) -> TruthSocialConfig:
         alert_all_posts=bool(data.get("alert_all_posts", True)),
         keyword_filter=list(data.get("keyword_filter", [])),
         backoff_seconds=list(data.get("backoff_seconds", [30, 60, 120, 300])),
+    )
+
+
+def _parse_kalshi(data: Dict) -> KalshiConfig:
+    thresholds_raw = data.get("thresholds", {})
+    thresholds = KalshiThresholds(
+        large_bet_contracts=float(thresholds_raw.get("large_bet_contracts", 100)),
+        odds_move_pct_5min=float(thresholds_raw.get("odds_move_pct_5min", 5.0)),
+        volume_spike_multiplier=float(thresholds_raw.get("volume_spike_multiplier", 3.0)),
+        min_absolute_volume=float(thresholds_raw.get("min_absolute_volume", 50)),
+    )
+    return KalshiConfig(
+        poll_interval_seconds=int(data.get("poll_interval_seconds", 30)),
+        api_base_url=str(data.get("api_base_url", "https://external-api.kalshi.com/trade-api/v2")),
+        tracked_event_tickers=list(data.get("tracked_event_tickers", [])),
+        thresholds=thresholds,
     )
 
 
@@ -351,6 +384,7 @@ def load_config(path: str) -> Config:
     cfg = Config(
         truth_social=_parse_truth_social(raw.get("truth_social", {})),
         polymarket=_parse_polymarket(raw.get("polymarket", {})),
+        kalshi=_parse_kalshi(raw.get("kalshi", {})),
         futures=_parse_futures(raw.get("futures", {})),
         alerts=_parse_alerts(raw.get("alerts", {})),
         database=_parse_database(raw.get("database", {})),

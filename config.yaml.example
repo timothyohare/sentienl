@@ -33,6 +33,21 @@ polymarket:
     volume_spike_multiplier: 3.0
     min_absolute_volume_usd: 500   # absolute floor to avoid dormant-market false positives
 
+kalshi:
+  poll_interval_seconds: 30
+  # Kalshi public API — read-only endpoints do not require authentication.
+  # CFTC-regulated US prediction market. No geo-block detected from Australia.
+  api_base_url: "https://external-api.kalshi.com/trade-api/v2"
+  tracked_event_tickers:
+    - KXMIDEASTWAR                    # Middle East conflict markets
+    - KXTRUMPTARIFF                   # Trump tariff/trade policy
+    - KXRUSUKR                        # Russia-Ukraine
+  thresholds:
+    large_bet_contracts: 100          # contract count threshold for large_bet signal
+    odds_move_pct_5min: 5.0           # percentage point shift between polls
+    volume_spike_multiplier: 3.0      # 24h volume vs lifetime daily average
+    min_absolute_volume: 50           # absolute floor to avoid thin-market noise
+
 futures:
   poll_interval_seconds: 60
   # Alpaca is the primary data source (real-time 1-min bars).

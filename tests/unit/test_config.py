@@ -42,6 +42,17 @@ VALID_CONFIG_YAML = textwrap.dedent("""\
         volume_spike_multiplier: 3.0
         min_absolute_volume_usd: 500
 
+    kalshi:
+      poll_interval_seconds: 30
+      api_base_url: "https://external-api.kalshi.com/trade-api/v2"
+      tracked_event_tickers:
+        - KXMIDEASTWAR
+      thresholds:
+        large_bet_contracts: 100
+        odds_move_pct_5min: 5.0
+        volume_spike_multiplier: 3.0
+        min_absolute_volume: 50
+
     futures:
       poll_interval_seconds: 60
       alpaca_api_key: ""
