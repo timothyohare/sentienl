@@ -1,0 +1,30 @@
+[Unit]
+Description=Sentinel — Truth Social Collector
+Documentation=https://github.com/timohare/sentinel
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=timohare
+WorkingDirectory=/home/timohare/dev/newdev/Sentinel
+Environment=PYTHONUNBUFFERED=1
+Environment=SENTINEL_CONFIG=/home/timohare/dev/newdev/Sentinel/config.yaml
+Environment=SENTINEL_DB=/home/timohare/dev/newdev/Sentinel/sentinel.db
+ExecStart=/home/timohare/dev/newdev/Sentinel/venv/bin/python -m sentinel.collectors.truth_social_runner
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sentinel-truth
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=20%
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+[Unit]
+Description=Sentinel — Alert Dispatcher
+Documentation=https://github.com/timohare/sentinel
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=timohare
+WorkingDirectory=/home/timohare/dev/newdev/Sentinel
+Environment=PYTHONUNBUFFERED=1
+Environment=SENTINEL_CONFIG=/home/timohare/dev/newdev/Sentinel/config.yaml
+Environment=SENTINEL_DB=/home/timohare/dev/newdev/Sentinel/sentinel.db
+ExecStart=/home/timohare/dev/newdev/Sentinel/venv/bin/python -m sentinel.dispatcher.alerter_runner
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sentinel-alerter
+
+# Resource limits
+MemoryMax=128M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

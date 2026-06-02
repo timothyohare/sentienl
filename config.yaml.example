@@ -1,0 +1,133 @@
+# config.yaml.example — Sentinel configuration
+# Copy this to config.yaml and fill in your values.
+# IMPORTANT: config.yaml is in .gitignore — never commit your real config.
+# Recommended: chmod 600 config.yaml (ntfy topic is effectively a secret)
+
+truth_social:
+  account_handle: realDonaldTrump
+  # Fallback numeric account ID used if handle resolution fails at startup.
+  # Verify with: curl https://truthsocial.com/api/v1/accounts/lookup?acct=realDonaldTrump
+  account_id_fallback: "107780257626128497"
+  poll_interval_seconds: 8
+  alert_all_posts: true
+  keyword_filter: []              # empty = alert on all posts
+  # Exponential backoff delays in seconds for 429/5xx errors
+  backoff_seconds: [30, 60, 120, 300]
+
+polymarket:
+  poll_interval_seconds: 30
+  # NOTE: gamma-api.polymarket.com was DNS-blocked from the development machine.
+  # Verify API access from your deployment server before relying on this collector.
+  # See human_todo.md for verification steps.
+  gamma_api_url: "https://gamma-api.polymarket.com"
+  polygonscan_api_key: ""         # optional — empty string disables wallet age lookup
+  tracked_markets:
+    - us-iran-ceasefire-2026
+    - us-attack-iran
+    - trump-executive-order-april
+  thresholds:
+    large_bet_usd: 5000
+    new_wallet_age_days: 7
+    new_wallet_min_bet_usd: 1000
+    odds_move_pct_5min: 5.0
+    volume_spike_multiplier: 3.0
+    min_absolute_volume_usd: 500   # absolute floor to avoid dormant-market false positives
+
+futures:
+  poll_interval_seconds: 60
+  # Alpaca is the primary data source (real-time 1-min bars).
+  # yfinance is the fallback (note: may have 10-20 min delay for futures).
+  alpaca_api_key: ""              # get a free key at https://alpaca.markets
+  alpaca_api_secret: ""
+  alpaca_base_url: "https://data.alpaca.markets"
+  instruments:
+    - ticker: "CL=F"
+      name: "WTI Oil"
+      min_absolute_volume: 500
+    - ticker: "BZ=F"
+      name: "Brent Oil"
+      min_absolute_volume: 300
+    - ticker: "NG=F"
+      name: "Natural Gas"
+      min_absolute_volume: 200
+    - ticker: "GC=F"
+      name: "Gold"
+      min_absolute_volume: 100
+    - ticker: "ES=F"
+      name: "S&P 500"
+      min_absolute_volume: 200
+    - ticker: "DX-Y.NYB"
+      name: "DXY"
+      min_absolute_volume: 50
+  thresholds:
+    spike_multiplier: 3.0         # alert threshold during active window
+    spike_multiplier_quiet: 5.0   # raised threshold outside active window
+    rolling_bars: 20              # number of 1-minute bars for average calculation
+  # Active monitoring window in UTC (midnight-crossing supported)
+  # 11:00–04:00 UTC = 9pm–2am AEST
+  active_window_utc:
+    start: "11:00"
+    end: "04:00"
+  suppress_volume_alerts_on_roll_dates: true
+  # CL=F rolls on the 3rd business day before the 25th of each month.
+  # ES=F rolls quarterly: March, June, September, December.
+  # Dates below are suppression windows (inclusive) — update for next 12 months.
+  roll_dates:
+    - date: "2026-04-22"
+      tickers: ["CL=F"]
+      note: "WTI April roll"
+    - date: "2026-05-21"
+      tickers: ["CL=F"]
+      note: "WTI May roll"
+    - date: "2026-06-19"
+      tickers: ["ES=F", "CL=F"]
+      note: "ES June expiry / WTI June roll"
+    - date: "2026-07-22"
+      tickers: ["CL=F"]
+      note: "WTI July roll"
+    - date: "2026-08-21"
+      tickers: ["CL=F"]
+      note: "WTI August roll"
+    - date: "2026-09-18"
+      tickers: ["ES=F", "CL=F"]
+      note: "ES September expiry / WTI September roll"
+    - date: "2026-10-22"
+      tickers: ["CL=F"]
+      note: "WTI October roll"
+    - date: "2026-11-20"
+      tickers: ["CL=F"]
+      note: "WTI November roll"
+    - date: "2026-12-18"
+      tickers: ["ES=F", "CL=F"]
+      note: "ES December expiry / WTI December roll"
+    - date: "2027-01-22"
+      tickers: ["CL=F"]
+      note: "WTI January roll"
+    - date: "2027-02-20"
+      tickers: ["CL=F"]
+      note: "WTI February roll"
+    - date: "2027-03-19"
+      tickers: ["ES=F", "CL=F"]
+      note: "ES March expiry / WTI March roll"
+
+alerts:
+  provider: ntfy                   # ntfy | pushover | telegram (only ntfy implemented in v1)
+  ntfy_topic: sentinel-CHANGEME    # your private topic name — treat as a secret
+  ntfy_url: https://ntfy.sh        # or your self-hosted ntfy URL
+  rate_limit_minutes: 5
+  # Quiet hours in UTC (Truth Social and CRITICAL alerts are never suppressed)
+  # 17:00–21:00 UTC = 3am–7am AEST
+  quiet_hours_utc:
+    start: "17:00"
+    end: "21:00"
+  quiet_suppress_below: MEDIUM    # suppress LOW and INFO during quiet hours
+  # Daily digest sent at this UTC time
+  digest_time_utc: "21:00"        # 7:00am AEST
+
+database:
+  path: ./sentinel.db
+  retention_days: 90
+
+dashboard:
+  host: "127.0.0.1"
+  port: 5000
