@@ -1,6 +1,6 @@
 # Sentinel — Next Steps
 
-_Updated 28 March 2026_
+_Updated 2 June 2026_
 
 ---
 
@@ -34,13 +34,15 @@ _Updated 28 March 2026_
 - [x] **Wallet age cache in SQLite** — keyed by address, persists across restarts
 - [x] **Renamed `quiet_min_priority` → `quiet_suppress_below`**
 - [x] **Hardcoded fallback Truth Social account ID** in `config.yaml.example`
+- [x] **Kalshi collector** — replaces Polymarket as prediction market source (blocked in AU by ACMA). Signals: `large_bet` (HIGH), `odds_move` (MEDIUM), `volume_spike` (MEDIUM). Public API, no auth required for read-only data. 33 unit tests.
 
 ---
 
 ## Still To Do — Blockers Before Running Live
 
 - [ ] **Spike: Validate Truth Social API from deployment machine** — hit `https://truthsocial.com/api/v1/accounts/:id/statuses` from the actual server, confirm unauthenticated JSON works, measure round-trip, test 10 rapid requests for 429 behaviour
-- [ ] **Spike: Validate Polymarket gamma API from deployment machine** — the gamma API was DNS-blocked from the dev machine (noted in `config.yaml.example`). Must confirm access from the server before relying on this collector.
+- [x] **~~Spike: Validate Polymarket gamma API~~** — **Blocked.** Polymarket is now classified as an illegal online gambling service in Australia by ACMA under the Interactive Gambling Act 2001. DNS-blocked nationally, not just from the dev machine. Replaced by Kalshi collector.
+- [ ] **Spike: Validate Kalshi API from deployment machine** — confirm the public API (`https://external-api.kalshi.com/trade-api/v2/markets`) returns data from the server, measure round-trip, check rate limits at 30-second polling cadence. Find and configure relevant geopolitical event tickers in `config.yaml`.
 - [ ] **Spike: Validate Alpaca free-tier futures data** — confirm real-time 1-min bar latency, check that CL=F / ES=F are available on free tier, verify rate limits at 60-second polling cadence
 
 ---
@@ -62,7 +64,7 @@ _Updated 28 March 2026_
 
 ## Reconsider for v1.1 (Not v2)
 
-- [ ] **Correlation detector** — Polymarket AND futures moving together in the same 10-minute window is the highest-signal pattern described in the PRD motivation. It's currently buried in v2. Consider pulling it to v1.1 as it's a pure signal-aggregation layer on top of already-collected data.
+- [ ] **Correlation detector** — Kalshi AND futures moving together in the same 10-minute window is the highest-signal pattern described in the PRD motivation. It's currently buried in v2. Consider pulling it to v1.1 as it's a pure signal-aggregation layer on top of already-collected data.
 
 ---
 
@@ -74,9 +76,10 @@ _Completed items moved to the Completed section above._
 
 - [ ] **Run historical backtest on known events** — using yfinance *historical* data, check whether the futures volume spike algorithm would have fired on: (1) Soleimani assassination Jan 3 2020 (WTI +4%), (2) Russia-Ukraine invasion Feb 24 2022 (Brent +8%), (3) Gaza Oct 7 2023 (oil +4%). If not, thresholds need revisiting before going live.
 
-### Add Kalshi as Second Prediction Market Source
+### ~~Add Kalshi as Second Prediction Market Source~~ (Done)
 
-- [ ] **Spike: Validate Kalshi API** — Kalshi is US-regulated, covers geopolitical events (military action, executive orders, sanctions), and is used by sophisticated participants who may avoid Polymarket. Document the API endpoint, market structure, and whether trade-level data is accessible. If viable, add it as an optional second collector.
+- [x] **Spike: Validate Kalshi API** — Completed. Kalshi is CFTC-regulated, public read-only API at `https://external-api.kalshi.com/trade-api/v2`. No auth for markets/trades endpoints. No geo-block from Australia. Trade-level data accessible via `/markets/trades` (fields: `trade_id`, `count_fp`, `yes_price_dollars`, `taker_side`, `created_time`). Market data via `/markets` (fields: `last_price_dollars`, `volume_fp`, `volume_24h_fp`, `open_interest_fp`). Events grouped by ticker (e.g. `KXMIDEASTWAR`). Categories include World, Politics, Economics, Financials. Geopolitical coverage thinner than Polymarket (more US-focused) but adequate for Sentinel's use case.
+- [x] **Build Kalshi collector** — Implemented in `sentinel/collectors/kalshi.py`. Signals: `large_bet` (HIGH), `odds_move` (MEDIUM), `volume_spike` (MEDIUM). No `new_wallet` equivalent (KYC platform). Runner: `python -m sentinel.collectors.kalshi_runner`. Source `"kalshi"` feeds into correlation detector.
 
 ### Define the Execution Pipeline
 
