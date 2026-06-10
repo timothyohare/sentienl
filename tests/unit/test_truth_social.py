@@ -37,6 +37,9 @@ def mock_config():
     cfg.truth_social.alert_all_posts = True
     cfg.truth_social.keyword_filter = []
     cfg.truth_social.backoff_seconds = [30, 60, 120, 300]
+    cfg.truth_social.critical_keywords = ["tariff", "china", "war", "fed"]
+    cfg.truth_social.endorsement_markers = ["endorse", "endorsement"]
+    cfg.truth_social.default_priority = "MEDIUM"
     return cfg
 
 
@@ -239,7 +242,8 @@ class TestSignalCreation:
         assert rows[0]["source"] == "truth_social"
 
     def test_process_post_critical_priority(self, collector):
-        collector.process_post(FAKE_POST_1)
+        # A market-moving post (tariffs) is classified CRITICAL
+        collector.process_post(FAKE_POST_2)
         rows = collector.db.execute_fetchall(
             "SELECT priority FROM signals ORDER BY id DESC LIMIT 1"
         )
@@ -363,3 +367,63 @@ class TestKeywordFilter:
         c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
         result = c.process_post(FAKE_POST_1)  # "We are winning!" — no match
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Priority classification
+# ---------------------------------------------------------------------------
+
+from sentinel.collectors.truth_social import classify_priority
+
+CRIT_KW = ["tariff", "china", "war", "fed"]
+ENDORSE = ["endorse", "endorsement"]
+
+
+class TestClassifyPriority:
+    def test_market_keyword_is_critical(self):
+        assert classify_priority(
+            "Tariffs are great for America!", CRIT_KW, ENDORSE, "MEDIUM"
+        ) == "CRITICAL"
+
+    def test_endorsement_is_low(self):
+        assert classify_priority(
+            "It is my Great Honor to endorse Congressman Tom Kean!",
+            CRIT_KW, ENDORSE, "MEDIUM",
+        ) == "LOW"
+
+    def test_neutral_post_is_default(self):
+        assert classify_priority(
+            "Beautiful day in Florida. MAGA!", CRIT_KW, ENDORSE, "MEDIUM"
+        ) == "MEDIUM"
+
+    def test_keyword_wins_over_endorsement(self):
+        # A post that endorses but also mentions a market keyword stays CRITICAL
+        assert classify_priority(
+            "I endorse this tough new China tariff!", CRIT_KW, ENDORSE, "MEDIUM"
+        ) == "CRITICAL"
+
+    def test_empty_text_is_default(self):
+        # Media-only post: unknown content -> default, never CRITICAL
+        assert classify_priority("", CRIT_KW, ENDORSE, "MEDIUM") == "MEDIUM"
+
+    def test_case_insensitive(self):
+        assert classify_priority("FED RATE DECISION", CRIT_KW, ENDORSE, "MEDIUM") == "CRITICAL"
+
+
+class TestProcessPostPriority:
+    def test_endorsement_post_written_as_low(self, collector, mock_db):
+        post = dict(FAKE_POST_1)
+        post["content"] = "<p>It is my Great Honor to endorse Tom Kean!</p>"
+        collector.process_post(post)
+        sig = mock_db.get_recent_signals()[0]
+        assert sig["priority"] == "LOW"
+
+    def test_tariff_post_written_as_critical(self, collector, mock_db):
+        collector.process_post(FAKE_POST_2)  # contains "Tariffs"
+        sig = mock_db.get_recent_signals()[0]
+        assert sig["priority"] == "CRITICAL"
+
+    def test_neutral_post_written_as_medium(self, collector, mock_db):
+        collector.process_post(FAKE_POST_1)  # "We are winning!"
+        sig = mock_db.get_recent_signals()[0]
+        assert sig["priority"] == "MEDIUM"

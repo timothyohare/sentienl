@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 HISTORY_MAX_BARS = 100  # cap in-memory history (keeps memory bounded)
+STATE_KEY_LAST_BAR = "futures_last_bar_{ticker}"
 SOURCE_MAP = {
     "CL=F": "futures_oil",
     "BZ=F": "futures_brent",
@@ -185,6 +186,7 @@ class FuturesVolumeCollector:
                         "volume": float(b.get("v", 0)),
                         "close": float(b.get("c", 0)),
                         "open": float(b.get("o", 0)),
+                        "timestamp": b.get("t"),
                     }
                     for b in bars
                 ]
@@ -207,11 +209,14 @@ class FuturesVolumeCollector:
                 logger.warning("yfinance returned empty data for %s", ticker)
                 return []
             bars = []
-            for _, row in df.iterrows():
+            for idx, row in df.iterrows():
+                # idx is the bar's timestamp (a pandas Timestamp); use it as the
+                # dedup key so the same delayed bar isn't reprocessed each poll.
                 bars.append({
                     "volume": row.get("Volume"),
                     "close": row.get("Close"),
                     "open": row.get("Open"),
+                    "timestamp": idx.isoformat() if hasattr(idx, "isoformat") else str(idx),
                 })
             return bars
         except Exception as exc:
@@ -252,6 +257,19 @@ class FuturesVolumeCollector:
         if self._suppress_on_roll and _is_roll_date(ticker, today_str, self._roll_dates):
             logger.debug("Roll date suppression active for %s on %s", ticker, today_str)
             return
+
+        # Bar-level dedup: yfinance/Alpaca hand us the latest bar every poll, but
+        # the bar is only delayed ~10 min — so the same bar repeats for several
+        # polls. Process each bar timestamp exactly once, otherwise we re-pollute
+        # the rolling average and re-fire the same spike. Bars without a
+        # timestamp can't be deduped and fall through to per-poll processing.
+        bar_ts = latest_bar.get("timestamp")
+        if bar_ts is not None:
+            state_key = STATE_KEY_LAST_BAR.format(ticker=ticker)
+            if self.db.state.get(state_key) == str(bar_ts):
+                logger.debug("%s: bar %s already processed — skipping", ticker, bar_ts)
+                return
+            self.db.state.set(state_key, str(bar_ts))
 
         current_volume = latest_bar.get("volume")
         close_price = latest_bar.get("close", 0.0) or 0.0

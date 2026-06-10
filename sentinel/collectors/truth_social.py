@@ -35,6 +35,43 @@ STATE_KEY_ACCOUNT_ID = "truth_social_account_id"
 
 DEFAULT_BACKOFF = [30, 60, 120, 300]
 
+# Market-moving keywords that escalate a post to CRITICAL. Tunable via config
+# (truth_social.critical_keywords); these are the built-in fallbacks.
+DEFAULT_CRITICAL_KEYWORDS = [
+    "tariff", "tariffs", "china", "taiwan", "iran", "russia", "ukraine",
+    "north korea", "nuclear", "war", "strike", "military", "troops",
+    "sanction", "embargo", "ceasefire", "fed", "interest rate", "rate cut",
+    "recession", "inflation", "oil", "crude", "shutdown", "default", "crash",
+    "tax", "deal", "trade",
+]
+# Routine endorsement language that DEMOTES a post (no market keyword) to LOW.
+DEFAULT_ENDORSEMENT_MARKERS = ["endorse", "endorsement"]
+DEFAULT_POST_PRIORITY = "MEDIUM"
+
+
+def classify_priority(
+    text: str,
+    critical_keywords: List[str],
+    endorsement_markers: List[str],
+    default_priority: str = DEFAULT_POST_PRIORITY,
+) -> str:
+    """
+    Classify a Truth Social post's priority from its text.
+
+    - Any market-moving keyword  -> CRITICAL (keywords win over everything).
+    - Routine endorsement language (and no keyword) -> LOW.
+    - Anything else (incl. media-only posts with empty text) -> default_priority.
+
+    This replaces the old blanket-CRITICAL behaviour, which flooded the alerter
+    with routine candidate endorsements and let them anchor false correlations.
+    """
+    t = (text or "").lower()
+    if any(kw.lower() in t for kw in critical_keywords):
+        return "CRITICAL"
+    if any(m.lower() in t for m in endorsement_markers):
+        return "LOW"
+    return default_priority
+
 
 # ---------------------------------------------------------------------------
 # Client protocol (for type-checking and testability)
@@ -119,6 +156,17 @@ class TruthSocialCollector:
         self._backoff_seconds = list(ts_cfg.backoff_seconds)
         self._alert_all_posts = ts_cfg.alert_all_posts
         self._keyword_filter = list(ts_cfg.keyword_filter)
+        # An empty list in config falls back to the built-in defaults, so the
+        # classifier is never silently disabled.
+        self._critical_keywords = (
+            list(getattr(ts_cfg, "critical_keywords", []) or []) or DEFAULT_CRITICAL_KEYWORDS
+        )
+        self._endorsement_markers = (
+            list(getattr(ts_cfg, "endorsement_markers", []) or []) or DEFAULT_ENDORSEMENT_MARKERS
+        )
+        self._default_priority = (
+            getattr(ts_cfg, "default_priority", None) or DEFAULT_POST_PRIORITY
+        )
         self._consecutive_errors = 0
 
     # ------------------------------------------------------------------
@@ -221,14 +269,21 @@ class TruthSocialCollector:
             "is_reblog": is_reblog,
         }
         summary = _build_summary(post, text)
+        priority = classify_priority(
+            text,
+            self._critical_keywords,
+            self._endorsement_markers,
+            self._default_priority,
+        )
         signal_id = self.db.insert_signal(
             source="truth_social",
             signal_type="new_post",
-            priority="CRITICAL",
+            priority=priority,
             payload=payload,
             summary=summary,
         )
-        logger.info("Signal %d created for post %s", signal_id, post.get("id"))
+        logger.info("Signal %d created for post %s (priority=%s)",
+                    signal_id, post.get("id"), priority)
         return signal_id
 
     # ------------------------------------------------------------------

@@ -56,6 +56,9 @@ class TruthSocialConfig:
     alert_all_posts: bool
     keyword_filter: List[str]
     backoff_seconds: List[int]
+    critical_keywords: List[str] = field(default_factory=list)
+    endorsement_markers: List[str] = field(default_factory=list)
+    default_priority: str = "MEDIUM"
 
 
 @dataclass
@@ -216,6 +219,12 @@ def _parse_truth_social(data: Dict) -> TruthSocialConfig:
         raise ConfigValidationError(
             f"'{sec}.poll_interval_seconds' must be a positive integer, got {poll!r}"
         )
+    default_priority = data.get("default_priority", "MEDIUM")
+    if default_priority not in VALID_PRIORITIES:
+        raise ConfigValidationError(
+            f"'{sec}.default_priority' must be one of {VALID_PRIORITIES}, "
+            f"got {default_priority!r}"
+        )
     return TruthSocialConfig(
         account_handle=handle,
         account_id_fallback=str(data.get("account_id_fallback", "107780257626128497")),
@@ -223,6 +232,9 @@ def _parse_truth_social(data: Dict) -> TruthSocialConfig:
         alert_all_posts=bool(data.get("alert_all_posts", True)),
         keyword_filter=list(data.get("keyword_filter", [])),
         backoff_seconds=list(data.get("backoff_seconds", [30, 60, 120, 300])),
+        critical_keywords=list(data.get("critical_keywords", [])),
+        endorsement_markers=list(data.get("endorsement_markers", ["endorse", "endorsement"])),
+        default_priority=default_priority,
     )
 
 

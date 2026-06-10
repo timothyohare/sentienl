@@ -309,6 +309,52 @@ class TestSignalCreation:
         assert not any(s["signal_type"] == "volume_spike" for s in signals)
 
 
+class TestBarDeduplication:
+    """A repeated (delayed) bar must not be re-added to history or re-fired.
+
+    Regression for the futures re-emission bug: yfinance returns the whole day
+    and bars[-1] is the same delayed bar every poll, re-polluting the rolling
+    average and re-firing the spike.
+    """
+
+    def test_same_timestamp_bar_processed_once(self, collector, mock_db):
+        instrument = mock_config_instrument("CL=F", "WTI Oil", 500)
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 500)
+        spike_bar = {"volume": 5000, "close": 76.0, "open": 75.0,
+                     "timestamp": "2026-03-27T14:00:00+00:00"}
+        # Process the identical bar three times (simulating repeat polls)
+        for _ in range(3):
+            collector.process_instrument(instrument, spike_bar, time(14, 0), "2026-03-27")
+        signals = mock_db.get_recent_signals()
+        spikes = [s for s in signals if s["signal_type"] == "volume_spike"]
+        assert len(spikes) == 1
+
+    def test_new_timestamp_bar_processed(self, collector, mock_db):
+        instrument = mock_config_instrument("CL=F", "WTI Oil", 500)
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 500)
+        bar1 = {"volume": 5000, "close": 76.0, "open": 75.0,
+                "timestamp": "2026-03-27T14:00:00+00:00"}
+        bar2 = {"volume": 5000, "close": 76.0, "open": 75.0,
+                "timestamp": "2026-03-27T14:01:00+00:00"}
+        collector.process_instrument(instrument, bar1, time(14, 0), "2026-03-27")
+        collector.process_instrument(instrument, bar2, time(14, 0), "2026-03-27")
+        signals = mock_db.get_recent_signals()
+        spikes = [s for s in signals if s["signal_type"] == "volume_spike"]
+        assert len(spikes) == 2
+
+    def test_timestampless_bar_not_deduped(self, collector, mock_db):
+        """Bars without a timestamp fall back to per-poll processing (no dedup)."""
+        instrument = mock_config_instrument("CL=F", "WTI Oil", 500)
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 500)
+        bar = {"volume": 5000, "close": 76.0, "open": 75.0}
+        collector.process_instrument(instrument, bar, time(14, 0), "2026-03-27")
+        signals = mock_db.get_recent_signals()
+        assert any(s["signal_type"] == "volume_spike" for s in signals)
+
+
 def mock_config_instrument(ticker, name, min_vol):
     inst = MagicMock()
     inst.ticker = ticker

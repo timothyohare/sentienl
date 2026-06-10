@@ -374,6 +374,13 @@ class Database:
         within ±minutes/2 of that signal's timestamp.
         """
         conn = self._get_conn()
+        # NOTE: created_at is stored as ISO-8601 with a 'T' separator and a
+        # timezone offset (e.g. '2026-06-03T00:09:41+00:00'). SQLite's
+        # datetime() emits a space-separated, UTC, no-offset string. Comparing
+        # the two forms directly is a lexicographic trap ('T' 0x54 > ' ' 0x20),
+        # so BOTH sides must be normalised through datetime() before comparison.
+        # The correlation_detector's own CRITICAL outputs are excluded from both
+        # anchor and join to avoid a self-reinforcing feedback loop.
         sql = """
             SELECT
                 s1.id        AS anchor_id,
@@ -382,11 +389,13 @@ class Database:
                 GROUP_CONCAT(DISTINCT s2.source) AS sources
             FROM signals s1
             JOIN signals s2
-              ON s2.created_at >= datetime(s1.created_at, '-' || ? || ' minutes')
-             AND s2.created_at <= datetime(s1.created_at, '+' || ? || ' minutes')
+              ON datetime(s2.created_at) >= datetime(s1.created_at, '-' || ? || ' minutes')
+             AND datetime(s2.created_at) <= datetime(s1.created_at, '+' || ? || ' minutes')
              AND s2.priority IN ('HIGH', 'CRITICAL')
+             AND s2.source != 'correlation_detector'
             WHERE s1.priority IN ('HIGH', 'CRITICAL')
-              AND s1.created_at >= datetime('now', '-' || ? || ' minutes')
+              AND s1.source != 'correlation_detector'
+              AND datetime(s1.created_at) >= datetime('now', '-' || ? || ' minutes')
             GROUP BY s1.id
             HAVING COUNT(DISTINCT s2.source) >= 2
             ORDER BY s1.created_at DESC

@@ -46,6 +46,15 @@ def insert_signal_now(db, source, priority="HIGH"):
     ).lastrowid
 
 
+def insert_signal_at(db, source, created_at, priority="HIGH"):
+    """Insert a signal at an explicit ISO8601 timestamp."""
+    return db.execute(
+        "INSERT INTO signals (source, signal_type, priority, payload, summary, alerted, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (source, "volume_spike", priority, "{}", f"Signal from {source}", 0, created_at),
+    ).lastrowid
+
+
 # ---------------------------------------------------------------------------
 # Correlation detection
 # ---------------------------------------------------------------------------
@@ -81,6 +90,32 @@ class TestCorrelationDetection:
         insert_signal_now(mock_db, "truth_social", "LOW")
         insert_signal_now(mock_db, "futures_oil", "INFO")
         mock_db._conn.commit()
+        result = detector.check_correlation()
+        assert result is False
+
+    def test_stale_signal_outside_window_not_correlated(self, detector, mock_db):
+        """A second-source signal hours earlier must NOT correlate with a recent
+        anchor (regression for the T-vs-space window bug that pulled in the whole
+        previous UTC day)."""
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        # Anchor: recent. Other source: ~3 hours earlier (well outside 10-min window)
+        insert_signal_at(mock_db, "truth_social", now.isoformat(), "HIGH")
+        insert_signal_at(
+            mock_db, "futures_oil",
+            (now - timedelta(hours=3)).isoformat(), "HIGH",
+        )
+        mock_db._conn.commit()
+        result = detector.check_correlation()
+        assert result is False
+
+    def test_detector_does_not_correlate_on_its_own_output(self, detector, mock_db):
+        """A prior correlated_signal (CRITICAL) must not count as a source and
+        seed a feedback loop."""
+        insert_signal_now(mock_db, "truth_social", "HIGH")
+        insert_signal_now(mock_db, "correlation_detector", "CRITICAL")
+        mock_db._conn.commit()
+        # Only one *real* source (truth_social) — should not correlate
         result = detector.check_correlation()
         assert result is False
 

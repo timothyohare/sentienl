@@ -42,6 +42,11 @@ class CorrelationDetector:
         self.check_interval_seconds = check_interval_seconds
         # Track which anchor signal IDs we've already correlated on
         self._fired_on_anchors: set = set()
+        # Time of the most recently fired correlation. A single real-world
+        # cluster surfaces as several overlapping anchors (each source sees the
+        # others); collapsing them via a window-length cooldown means one
+        # cluster yields one alert instead of one-per-source.
+        self._last_fired_time: Optional[datetime] = None
 
     # ------------------------------------------------------------------
     # Core logic
@@ -82,6 +87,18 @@ class CorrelationDetector:
             source_count = window.get("source_count", 0)
             anchor_time = window.get("anchor_time", "")
 
+            # Collapse overlapping anchors of the same cluster: skip if we
+            # already fired a correlation within window_minutes of this anchor.
+            anchor_dt = self._parse_dt(anchor_time)
+            if (
+                anchor_dt is not None
+                and self._last_fired_time is not None
+                and abs((anchor_dt - self._last_fired_time).total_seconds())
+                <= self.window_minutes * 60
+            ):
+                self._fired_on_anchors.add(anchor_id)
+                continue
+
             logger.warning(
                 "CORRELATED SIGNAL: %d sources (%s) within %d-minute window at %s",
                 source_count, sources, self.window_minutes, anchor_time,
@@ -103,6 +120,21 @@ class CorrelationDetector:
                 ),
             )
             self._fired_on_anchors.add(anchor_id)
+            if anchor_dt is not None:
+                self._last_fired_time = anchor_dt
+
+    @staticmethod
+    def _parse_dt(value: str) -> Optional[datetime]:
+        """Parse an ISO-8601 timestamp into a timezone-aware datetime, or None."""
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
 
     # ------------------------------------------------------------------
     # Main loop
