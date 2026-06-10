@@ -22,6 +22,7 @@ source venv/bin/activate
 
 ```bash
 pip install -r requirements.txt
+playwright install chromium   # required for Truth Social collector
 ```
 
 For development (includes pytest, coverage):
@@ -42,7 +43,34 @@ Edit `config.yaml` and fill in:
 - `futures.alpaca_api_key` / `alpaca_api_secret` — from https://alpaca.markets (free)
 - `polymarket.polygonscan_api_key` — optional, for wallet age lookups
 
-### 4. Initialise the database
+### 4. Set up Truth Social credentials
+
+The Truth Social collector requires a registered account. Create a `.env` file in the project root:
+
+```bash
+# .env — Truth Social credentials (this file is in .gitignore)
+username=your_truthsocial_username
+password=your_truthsocial_password
+```
+
+Alternatively, set environment variables `TS_USERNAME` and `TS_PASSWORD`.
+
+**Why Playwright?** Cloudflare blocks direct HTTP requests (httpx, curl) to
+truthsocial.com. The collector uses a headless Chromium browser to navigate
+the site (which passes Cloudflare's JS challenge), logs in via the web UI,
+then makes API calls using in-browser `fetch()`. The browser session stays
+alive for the lifetime of the collector process.
+
+**How it works:**
+1. Playwright launches headless Chromium and navigates to `truthsocial.com`
+2. The Cloudflare JS challenge is solved automatically by the real browser engine
+3. The collector clicks "Sign In", fills the login modal, and submits
+4. A bearer token is extracted from `localStorage` after successful login
+5. All subsequent API calls (`/api/v1/accounts/:id/statuses`) run via
+   `page.evaluate(fetch(...))` inside the browser context
+6. The polling loop runs normally — the browser session is reused across polls
+
+### 5. Initialise the database
 
 ```bash
 python sentinel/scripts/init_db.py
@@ -50,7 +78,7 @@ python sentinel/scripts/init_db.py
 python sentinel/scripts/init_db.py --db-path /path/to/sentinel.db
 ```
 
-### 5. Test the alert pipeline
+### 6. Test the alert pipeline
 
 Sends a test notification to your ntfy topic to confirm delivery works before starting real collectors:
 
@@ -159,6 +187,9 @@ The service files use environment variables for paths. You can also set these wh
 |---|---|---|
 | `SENTINEL_CONFIG` | `./config.yaml` | Path to config file |
 | `SENTINEL_DB` | `./sentinel.db` | Path to SQLite database |
+| `SENTINEL_ENV` | `./.env` | Path to `.env` file (Truth Social credentials) |
+| `TS_USERNAME` | *(from .env)* | Truth Social username (overrides `.env`) |
+| `TS_PASSWORD` | *(from .env)* | Truth Social password (overrides `.env`) |
 
 ---
 
@@ -170,8 +201,9 @@ sentinel/
     config.py          — config loader and validation
     db.py              — SQLite access layer
   collectors/
-    truth_social.py    — Truth Social post monitor
-    polymarket.py      — Polymarket trade/odds monitor
+    truth_social.py         — Truth Social post monitor (collector logic)
+    truth_social_client.py  — Playwright browser client for Truth Social API
+    polymarket.py           — Polymarket trade/odds monitor
     futures_volume.py  — CME futures volume monitor
     correlation_detector.py — multi-source signal correlator
     *_runner.py        — entrypoints for each collector

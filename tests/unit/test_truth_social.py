@@ -5,12 +5,10 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch, call
 
 import pytest
-import responses as responses_lib
 
 from sentinel.collectors.truth_social import (
     TruthSocialCollector,
     ACCOUNT_ID_FALLBACK,
-    HEADERS,
     BASE_URL,
     _extract_text,
     _build_summary,
@@ -43,8 +41,16 @@ def mock_config():
 
 
 @pytest.fixture
-def collector(mock_config, mock_db):
-    return TruthSocialCollector(config=mock_config, db=mock_db)
+def mock_client():
+    client = MagicMock()
+    client.fetch_posts.return_value = []
+    client.resolve_account_id.return_value = None
+    return client
+
+
+@pytest.fixture
+def collector(mock_config, mock_db, mock_client):
+    return TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
 
 
 # Fake API responses
@@ -132,34 +138,23 @@ class TestBuildSummary:
 # ---------------------------------------------------------------------------
 
 class TestAccountIdResolution:
-    @responses_lib.activate
-    def test_resolve_account_id_success(self, collector):
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/lookup",
-            json={"id": "107780257626128497", "username": "realDonaldTrump"},
-            status=200,
-        )
+    def test_resolve_account_id_success(self, collector, mock_client):
+        mock_client.resolve_account_id.return_value = "107780257626128497"
         account_id = collector.resolve_account_id()
         assert account_id == "107780257626128497"
 
-    @responses_lib.activate
-    def test_resolve_account_id_falls_back_on_error(self, collector):
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/lookup",
-            status=404,
-        )
+    def test_resolve_account_id_falls_back_on_none(self, collector, mock_client):
+        mock_client.resolve_account_id.return_value = None
         account_id = collector.resolve_account_id()
         assert account_id == ACCOUNT_ID_FALLBACK
 
-    @responses_lib.activate
-    def test_resolve_account_id_falls_back_on_network_error(self, collector):
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/lookup",
-            body=Exception("Network error"),
-        )
+    def test_resolve_account_id_falls_back_on_exception(self, collector, mock_client):
+        mock_client.resolve_account_id.side_effect = Exception("Network error")
+        account_id = collector.resolve_account_id()
+        assert account_id == ACCOUNT_ID_FALLBACK
+
+    def test_resolve_account_id_no_client(self, mock_config, mock_db):
+        collector = TruthSocialCollector(config=mock_config, db=mock_db, client=None)
         account_id = collector.resolve_account_id()
         assert account_id == ACCOUNT_ID_FALLBACK
 
@@ -169,51 +164,29 @@ class TestAccountIdResolution:
 # ---------------------------------------------------------------------------
 
 class TestFetchPosts:
-    @responses_lib.activate
-    def test_fetch_posts_returns_list(self, collector):
-        account_id = "107780257626128497"
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/{account_id}/statuses",
-            json=[FAKE_POST_1, FAKE_POST_2],
-            status=200,
-        )
-        posts = collector.fetch_posts(account_id)
+    def test_fetch_posts_returns_list(self, collector, mock_client):
+        mock_client.fetch_posts.return_value = [FAKE_POST_1, FAKE_POST_2]
+        posts = collector.fetch_posts("107780257626128497")
         assert len(posts) == 2
 
-    @responses_lib.activate
-    def test_fetch_posts_returns_empty_on_404(self, collector):
-        account_id = "107780257626128497"
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/{account_id}/statuses",
-            status=404,
-        )
-        posts = collector.fetch_posts(account_id)
+    def test_fetch_posts_returns_empty_on_empty(self, collector, mock_client):
+        mock_client.fetch_posts.return_value = []
+        posts = collector.fetch_posts("107780257626128497")
         assert posts == []
 
-    @responses_lib.activate
-    def test_fetch_posts_includes_correct_query_params(self, collector):
-        account_id = "107780257626128497"
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/{account_id}/statuses",
-            json=[FAKE_POST_1],
-            status=200,
-        )
-        collector.fetch_posts(account_id, limit=20)
-        assert len(responses_lib.calls) == 1
-        assert "limit=20" in responses_lib.calls[0].request.url
+    def test_fetch_posts_passes_params(self, collector, mock_client):
+        mock_client.fetch_posts.return_value = [FAKE_POST_1]
+        collector.fetch_posts("107780257626128497", limit=20)
+        mock_client.fetch_posts.assert_called_once_with("107780257626128497", limit=20)
 
-    @responses_lib.activate
-    def test_fetch_posts_handles_network_error(self, collector):
-        account_id = "107780257626128497"
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/{account_id}/statuses",
-            body=ConnectionError("Network error"),
-        )
-        posts = collector.fetch_posts(account_id)
+    def test_fetch_posts_handles_exception(self, collector, mock_client):
+        mock_client.fetch_posts.side_effect = ConnectionError("Network error")
+        posts = collector.fetch_posts("107780257626128497")
+        assert posts == []
+
+    def test_fetch_posts_no_client(self, mock_config, mock_db):
+        collector = TruthSocialCollector(config=mock_config, db=mock_db, client=None)
+        posts = collector.fetch_posts("107780257626128497")
         assert posts == []
 
 
@@ -328,42 +301,21 @@ class TestStateTracking:
 # ---------------------------------------------------------------------------
 
 class TestBackfillOnStartup:
-    @responses_lib.activate
-    def test_backfill_processes_missed_posts(self, collector):
-        account_id = "107780257626128497"
+    def test_backfill_processes_missed_posts(self, collector, mock_client):
         collector.set_last_post_id(FAKE_POST_1["id"])
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/{account_id}/statuses",
-            json=[FAKE_POST_2, FAKE_POST_1],
-            status=200,
-        )
-        processed = collector.backfill(account_id)
+        mock_client.fetch_posts.return_value = [FAKE_POST_2, FAKE_POST_1]
+        processed = collector.backfill("107780257626128497")
         assert processed == 1  # only FAKE_POST_2 is new
 
-    @responses_lib.activate
-    def test_backfill_no_last_id_processes_all(self, collector):
-        account_id = "107780257626128497"
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/{account_id}/statuses",
-            json=[FAKE_POST_2, FAKE_POST_1],
-            status=200,
-        )
-        processed = collector.backfill(account_id)
+    def test_backfill_no_last_id_processes_all(self, collector, mock_client):
+        mock_client.fetch_posts.return_value = [FAKE_POST_2, FAKE_POST_1]
+        processed = collector.backfill("107780257626128497")
         assert processed == 2
 
-    @responses_lib.activate
-    def test_backfill_updates_last_post_id(self, collector):
-        account_id = "107780257626128497"
+    def test_backfill_updates_last_post_id(self, collector, mock_client):
         collector.set_last_post_id(FAKE_POST_1["id"])
-        responses_lib.add(
-            responses_lib.GET,
-            f"{BASE_URL}/api/v1/accounts/{account_id}/statuses",
-            json=[FAKE_POST_2, FAKE_POST_1],
-            status=200,
-        )
-        collector.backfill(account_id)
+        mock_client.fetch_posts.return_value = [FAKE_POST_2, FAKE_POST_1]
+        collector.backfill("107780257626128497")
         assert collector.get_last_post_id() == FAKE_POST_2["id"]
 
 
@@ -386,13 +338,28 @@ class TestBackoffLogic:
 
 
 # ---------------------------------------------------------------------------
-# Headers
+# Keyword filtering
 # ---------------------------------------------------------------------------
 
-class TestHeaders:
-    def test_headers_include_user_agent(self):
-        assert "User-Agent" in HEADERS
-        assert "Mozilla" in HEADERS["User-Agent"]
+class TestKeywordFilter:
+    def test_no_filter_matches_all(self, collector):
+        assert collector._matches_keyword_filter("anything") is True
 
-    def test_headers_include_accept_json(self):
-        assert HEADERS.get("Accept") == "application/json"
+    def test_filter_matches(self, mock_config, mock_db, mock_client):
+        mock_config.truth_social.keyword_filter = ["tariff", "oil"]
+        mock_config.truth_social.alert_all_posts = False
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        assert c._matches_keyword_filter("New tariff announcement") is True
+
+    def test_filter_no_match(self, mock_config, mock_db, mock_client):
+        mock_config.truth_social.keyword_filter = ["tariff", "oil"]
+        mock_config.truth_social.alert_all_posts = False
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        assert c._matches_keyword_filter("Good morning America") is False
+
+    def test_filter_skips_post_in_process(self, mock_config, mock_db, mock_client):
+        mock_config.truth_social.keyword_filter = ["tariff"]
+        mock_config.truth_social.alert_all_posts = False
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        result = c.process_post(FAKE_POST_1)  # "We are winning!" — no match
+        assert result is None

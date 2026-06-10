@@ -7,18 +7,19 @@ to SQLite. Runs in a synchronous loop with time.sleep().
 Key behaviours:
 - Resolves account ID on startup; falls back to hardcoded ID if lookup fails.
 - Backfills missed posts on startup (compares last 20 posts against state).
-- Exponential backoff on 429 / 5xx responses.
+- Exponential backoff on errors / empty responses.
 - Writes CRITICAL priority signals to the signals table.
 - Tracks last seen post ID in the state table.
+- Uses a pluggable ``client`` for HTTP access. In production this is a
+  Playwright-based browser client that bypasses Cloudflare; in tests it
+  can be replaced with a simple mock.
 """
 
 import logging
 import re
 import time
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional
-
-import httpx
+from typing import Any, Dict, List, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +30,24 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://truthsocial.com"
 ACCOUNT_ID_FALLBACK = "107780257626128497"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
-    "Accept": "application/json",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-}
-
 STATE_KEY_LAST_POST_ID = "truth_social_last_post_id"
 STATE_KEY_ACCOUNT_ID = "truth_social_account_id"
 
 DEFAULT_BACKOFF = [30, 60, 120, 300]
+
+
+# ---------------------------------------------------------------------------
+# Client protocol (for type-checking and testability)
+# ---------------------------------------------------------------------------
+
+class TruthSocialClientProtocol(Protocol):
+    """Minimal interface that the collector needs from its HTTP client."""
+
+    def fetch_posts(
+        self, account_id: str, limit: int = 20
+    ) -> List[Dict[str, Any]]: ...
+
+    def resolve_account_id(self, handle: str) -> Optional[str]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -95,13 +102,16 @@ class TruthSocialCollector:
     Synchronous Truth Social polling collector.
 
     Typical usage:
-        collector = TruthSocialCollector(config, db)
+        client = TruthSocialClient(username, password)
+        client.start()
+        collector = TruthSocialCollector(config, db, client)
         collector.run()  # blocks forever
     """
 
-    def __init__(self, config, db):
+    def __init__(self, config, db, client: Optional[TruthSocialClientProtocol] = None):
         self.config = config
         self.db = db
+        self.client = client
         ts_cfg = config.truth_social
         self._poll_interval = ts_cfg.poll_interval_seconds
         self._account_handle = ts_cfg.account_handle
@@ -109,7 +119,6 @@ class TruthSocialCollector:
         self._backoff_seconds = list(ts_cfg.backoff_seconds)
         self._alert_all_posts = ts_cfg.alert_all_posts
         self._keyword_filter = list(ts_cfg.keyword_filter)
-        self._client = httpx.Client(headers=HEADERS, timeout=15.0, follow_redirects=True)
         self._consecutive_errors = 0
 
     # ------------------------------------------------------------------
@@ -118,29 +127,20 @@ class TruthSocialCollector:
 
     def resolve_account_id(self) -> str:
         """
-        Resolve the account ID from the handle via the Mastodon /api/v1/accounts/lookup endpoint.
+        Resolve the account ID from the handle via the client.
         Falls back to the hardcoded ID on any error.
         """
-        url = f"{BASE_URL}/api/v1/accounts/lookup"
+        if self.client is None:
+            logger.warning("No client — using fallback account ID %s", self._account_id_fallback)
+            return self._account_id_fallback
         try:
-            resp = self._client.get(url, params={"acct": self._account_handle})
-            if resp.status_code == 200:
-                data = resp.json()
-                resolved_id = str(data.get("id", ""))
-                if resolved_id:
-                    logger.info("Resolved account ID %s for @%s", resolved_id, self._account_handle)
-                    return resolved_id
-            logger.warning(
-                "Account ID lookup returned %d — using fallback ID %s",
-                resp.status_code,
-                self._account_id_fallback,
-            )
+            resolved_id = self.client.resolve_account_id(self._account_handle)
+            if resolved_id:
+                logger.info("Resolved account ID %s for @%s", resolved_id, self._account_handle)
+                return resolved_id
         except Exception as exc:
-            logger.warning(
-                "Account ID lookup failed (%s) — using fallback ID %s",
-                exc,
-                self._account_id_fallback,
-            )
+            logger.warning("Account ID lookup failed (%s)", exc)
+        logger.warning("Using fallback account ID %s", self._account_id_fallback)
         return self._account_id_fallback
 
     # ------------------------------------------------------------------
@@ -152,16 +152,14 @@ class TruthSocialCollector:
         Fetch recent posts for the given account ID.
         Returns an empty list on any error.
         """
-        url = f"{BASE_URL}/api/v1/accounts/{account_id}/statuses"
+        if self.client is None:
+            logger.error("No client configured — cannot fetch posts")
+            return []
         try:
-            resp = self._client.get(url, params={"limit": limit, "exclude_replies": "true"})
-            if resp.status_code == 200:
+            posts = self.client.fetch_posts(account_id, limit=limit)
+            if posts:
                 self._consecutive_errors = 0
-                return resp.json()
-            if resp.status_code == 429:
-                logger.warning("Truth Social rate limit hit (429)")
-            else:
-                logger.warning("Truth Social fetch returned HTTP %d", resp.status_code)
+            return posts
         except Exception as exc:
             logger.error("Truth Social fetch exception: %s", exc)
         return []
@@ -280,7 +278,7 @@ class TruthSocialCollector:
     def run(self) -> None:
         """
         Main polling loop. Blocks forever. Intended to run as a systemd service.
-        On 429/5xx errors, applies exponential backoff.
+        On errors, applies exponential backoff.
         """
         logger.info("TruthSocialCollector starting up")
         account_id = self.resolve_account_id()

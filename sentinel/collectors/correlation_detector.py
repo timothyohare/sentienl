@@ -6,7 +6,7 @@ Runs a pure SQL query every 5 minutes against the signals table to find
 If found, fires a CRITICAL "CORRELATED SIGNAL" alert via the signals table.
 
 This is the single highest-leverage feature in Sentinel: a single-source alert
-has low signal-to-noise; correlated alerts across Truth Social + Polymarket +
+has low signal-to-noise; correlated alerts across Truth Social + Kalshi +
 Futures are the pattern worth acting on.
 
 The detector is designed to be run in a dedicated thread or process but also

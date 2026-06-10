@@ -36,8 +36,8 @@ logger = logging.getLogger("sentinel.healthcheck")
 # Sources that must have recent activity to be considered healthy
 MONITORED_SOURCES = [
     "truth_social",
+    "kalshi",
     "futures_oil",
-    # Polymarket excluded by default as API may be DNS-blocked
 ]
 
 STALE_THRESHOLD_MINUTES = 30  # collector considered stale if no signals in 30 min

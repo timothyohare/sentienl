@@ -33,6 +33,7 @@ KALSHI_API_BASE = "https://external-api.kalshi.com/trade-api/v2"
 
 STATE_KEY_LAST_TRADE = "kalshi_last_trade_{ticker}"
 STATE_KEY_PREV_PRICE = "kalshi_prev_price_{ticker}"
+STATE_KEY_VOLUME_SPIKE = "kalshi_vol_spike_{ticker}"
 
 DEFAULT_BACKOFF = [30, 60, 120, 300]
 
@@ -265,7 +266,12 @@ class KalshiCollector:
         self.set_previous_price(ticker, current_yes)
 
     def _check_volume_spike(self, market: Dict[str, Any]) -> None:
-        """Check for unusual volume vs. 24hr baseline."""
+        """Check for unusual volume vs. 24hr baseline.
+
+        Deduplication: only fires once per ticker per spike. A new signal
+        is emitted only if (a) the ratio has doubled since the last alert,
+        or (b) 6+ hours have passed since the last alert for this ticker.
+        """
         ticker = market.get("ticker", "unknown")
         market_title = market.get("title", ticker)
 
@@ -279,9 +285,6 @@ class KalshiCollector:
             return
 
         # Use lifetime daily average as baseline
-        # volume_fp is total lifetime volume; estimate daily average
-        # If 24h volume significantly exceeds what daily average would predict,
-        # that's a spike
         try:
             created = market.get("created_time", "")
             if created:
@@ -300,6 +303,22 @@ class KalshiCollector:
             min_absolute=self._thresholds.min_absolute_volume,
         )
         if spike:
+            # Dedup: check if we already fired for this ticker recently
+            state_key = STATE_KEY_VOLUME_SPIKE.format(ticker=ticker)
+            prev = self.db.state.get(state_key)
+            now_ts = time.time()
+            if prev:
+                try:
+                    parts = prev.split("|")
+                    prev_ratio = float(parts[0])
+                    prev_ts = float(parts[1])
+                    hours_elapsed = (now_ts - prev_ts) / 3600
+                    # Only re-fire if ratio doubled or 6+ hours passed
+                    if spike["ratio"] < prev_ratio * 2 and hours_elapsed < 6:
+                        return
+                except (ValueError, IndexError):
+                    pass  # corrupted state, re-fire
+
             logger.info("Volume spike on %s: %.1fx baseline", ticker, spike["ratio"])
             self.db.insert_signal(
                 source="kalshi",
@@ -317,6 +336,7 @@ class KalshiCollector:
                     f"(24h: {volume_24h:,.0f}, avg: {daily_avg:,.0f})"
                 ),
             )
+            self.db.state.set(state_key, f"{spike['ratio']}|{now_ts}")
 
     def process_market(self, market: Dict[str, Any]) -> None:
         """Process a single market: check trades, odds, and volume."""

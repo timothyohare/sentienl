@@ -86,7 +86,7 @@ Polymarket (`sentinel/collectors/polymarket.py`) was the original prediction mar
 
 ### Futures collector specifics
 
-Alpaca is the primary data source (real-time 1-min bars); yfinance is the fallback. Roll-date suppression is configured as a list of dates in `config.yaml` and checked on every poll cycle. Per-instrument `min_absolute_volume` floors prevent false positives on thin overnight sessions.
+yfinance is the sole data source for futures (1-min bars, ~10min delay). Alpaca does not support futures — its data API rejects futures symbols. Alpaca config and code remain in the collector for a potential stock/ETF monitoring pivot. Roll-date suppression is configured as a list of dates in `config.yaml` and checked on every poll cycle. Per-instrument `min_absolute_volume` floors prevent false positives on thin overnight sessions. DX-Y.NYB has zero intraday volume — may need daily-only monitoring or dropping.
 
 ### Config loading pattern
 

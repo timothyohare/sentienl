@@ -286,10 +286,13 @@ class Alerter:
         Send a push notification via ntfy. Returns True on success.
         """
         url = f"{self.config.alerts.ntfy_url}/{self.config.alerts.ntfy_topic}"
+        # Replace non-ASCII chars in title to avoid latin-1 encoding errors
+        # in HTTP headers (requests library limitation)
+        safe_title = title.encode("ascii", errors="replace").decode("ascii")
         headers = {
             "Priority": priority,
             "Tags": tags,
-            "Title": title,
+            "Title": safe_title,
             "Content-Type": "text/plain; charset=utf-8",
         }
         try:

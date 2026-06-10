@@ -35,22 +35,23 @@ _Updated 2 June 2026_
 - [x] **Renamed `quiet_min_priority` → `quiet_suppress_below`**
 - [x] **Hardcoded fallback Truth Social account ID** in `config.yaml.example`
 - [x] **Kalshi collector** — replaces Polymarket as prediction market source (blocked in AU by ACMA). Signals: `large_bet` (HIGH), `odds_move` (MEDIUM), `volume_spike` (MEDIUM). Public API, no auth required for read-only data. 33 unit tests.
+- [x] **Truth Social Playwright client** — Cloudflare blocks all direct HTTP to truthsocial.com. Added `truth_social_client.py` (headless Chromium login + in-browser fetch) and refactored collector to use pluggable client protocol. Credentials via `.env` file or `TS_USERNAME`/`TS_PASSWORD` env vars. 44 unit tests.
 
 ---
 
-## Still To Do — Blockers Before Running Live
+## Pre-Launch Spikes (All Complete)
 
-- [ ] **Spike: Validate Truth Social API from deployment machine** — hit `https://truthsocial.com/api/v1/accounts/:id/statuses` from the actual server, confirm unauthenticated JSON works, measure round-trip, test 10 rapid requests for 429 behaviour
+- [x] **Spike: Validate Truth Social API from deployment machine** — Cloudflare blocks direct HTTP from this IP. Solved with Playwright headless browser: navigates to site (passes JS challenge), logs in via web UI, uses in-browser `fetch()` for API calls. Confirmed working: posts fetched successfully, repeated polling stable.
 - [x] **~~Spike: Validate Polymarket gamma API~~** — **Blocked.** Polymarket is now classified as an illegal online gambling service in Australia by ACMA under the Interactive Gambling Act 2001. DNS-blocked nationally, not just from the dev machine. Replaced by Kalshi collector.
-- [ ] **Spike: Validate Kalshi API from deployment machine** — confirm the public API (`https://external-api.kalshi.com/trade-api/v2/markets`) returns data from the server, measure round-trip, check rate limits at 30-second polling cadence. Find and configure relevant geopolitical event tickers in `config.yaml`.
-- [ ] **Spike: Validate Alpaca free-tier futures data** — confirm real-time 1-min bar latency, check that CL=F / ES=F are available on free tier, verify rate limits at 60-second polling cadence
+- [x] **Spike: Validate Kalshi API from deployment machine** — Public API confirmed working. Built full collector with `large_bet`, `odds_move`, `volume_spike` signals. No auth required for read-only endpoints. No geo-block from Australia. Remaining task: find and configure relevant geopolitical event tickers in `config.yaml` before going live.
+- [x] **Spike: Validate Alpaca free-tier futures data** — **Alpaca does not support futures.** Data API returns "invalid symbol" for CL=F, ES=F, etc. Zero assets in `futures` asset class. Alpaca covers stocks, crypto, and options only. Paper trading account active (keys in `.env`) — keep for potential stock/ETF monitoring pivot. **yfinance (v1.4.1) is the sole futures data source:** all 6 instruments working, ~10min latency on 1-min bars, volume data present, no rate limiting at 60s cadence. Pinned v0.2.40 was broken; updated `requirements.txt` to `>=1.4.0`. DX-Y.NYB has zero intraday volume — consider daily-only or dropping.
 
 ---
 
 ## Operational Setup (Before Going Live)
 
-- [ ] **Wire `healthcheck.py` to cron** — add a cron entry: `0 * * * * /path/to/venv/bin/python /path/to/Sentinel/sentinel/scripts/healthcheck.py` (hourly, sends silent ntfy ping confirming collectors are alive; absence of heartbeat = system is down)
-- [ ] **Smoke test end-to-end** — run `python sentinel/scripts/test_alert.py` to confirm ntfy delivery works before starting the real collectors
+- [x] **Wire `healthcheck.py` to cron** — installed: `7 * * * * .../healthcheck.py --heartbeat`. Runs hourly at :07, sends ntfy heartbeat. Monitored sources: `truth_social`, `kalshi`, `futures_oil`. Stale threshold: 30 minutes.
+- [x] **Smoke test end-to-end** — `test_alert.py` sent successfully, ntfy notification received on phone. Topic: `sentinel-timohare-2026`.
 - [ ] **48-hour burn-in run** — run all services, suppress LOW/MEDIUM alerts, review signal/noise ratio daily
 
 ---
@@ -62,9 +63,9 @@ _Updated 2 June 2026_
 
 ---
 
-## Reconsider for v1.1 (Not v2)
+## ~~Reconsider for v1.1~~ (Done — already in MVP)
 
-- [ ] **Correlation detector** — Kalshi AND futures moving together in the same 10-minute window is the highest-signal pattern described in the PRD motivation. It's currently buried in v2. Consider pulling it to v1.1 as it's a pure signal-aggregation layer on top of already-collected data.
+- [x] **Correlation detector** — Already implemented in `sentinel/collectors/correlation_detector.py`. Runs a SQL self-join every 5 minutes looking for HIGH/CRITICAL signals from 2+ distinct sources within a 10-minute window. Fires a CRITICAL `correlated_signal`. Works automatically with all sources (Truth Social, Kalshi, futures) — no configuration needed. The docstring references Polymarket but the SQL query is source-agnostic.
 
 ---
 
