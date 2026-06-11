@@ -5,9 +5,11 @@ Polls 1-minute OHLCV data for configured futures instruments and generates
 HIGH/MEDIUM signals when volume exceeds the rolling average by a configured
 multiplier.
 
-Data sources:
-  - Primary: Alpaca Markets (free tier, real-time 1-min bars)
-  - Fallback: yfinance (may have 10–20 min delay for futures)
+Data source:
+  - yfinance is the sole active source (1-min bars, ~10 min delay for futures).
+  - Alpaca does NOT support futures (its data API rejects futures symbols).
+    The Alpaca config/code remains inert in this collector for a potential
+    stock/ETF monitoring pivot — it is not used for futures.
 
 Instruments: CL=F, BZ=F, NG=F, GC=F, ES=F, DX-Y.NYB
 

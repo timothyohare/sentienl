@@ -251,7 +251,7 @@ TRUTH_TEMPLATE = BASE_TEMPLATE.replace(
     {% for signal in signals %}
     <div class="signal-card" style="border-left-color:#dc2626;">
       <div class="signal-header">
-        <span class="badge badge-CRITICAL">CRITICAL</span>
+        <span class="badge badge-{{ signal.priority }}">{{ signal.priority }}</span>
         {% if signal.payload.is_reblog %}<span style="color:#64748b;font-size:12px;">retruth</span>{% endif %}
         {% if signal.payload.has_media %}<span style="color:#94a3b8;font-size:12px;">&#128248; media</span>{% endif %}
       </div>

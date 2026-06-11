@@ -50,7 +50,7 @@ Collectors ──insert_signal()──► signals table ──poll(alerted=0)─
 ```
 
 1. **Collectors** (`sentinel/collectors/`) run as independent loops. Each calls `db.insert_signal()` directly and tracks its own cursor state in `db.state` (key-value table). The Truth Social collector uses a Playwright headless browser (`truth_social_client.py`) to bypass Cloudflare — see section below.
-2. **Alerter** (`sentinel/dispatcher/alerter.py`) polls `signals WHERE alerted=0` every 2 seconds, applies quiet-hours / rate-limit logic, sends ntfy HTTP requests, then calls `db.mark_alerted(id)`. Truth Social (`CRITICAL`) signals bypass both rate limiting and quiet hours.
+2. **Alerter** (`sentinel/dispatcher/alerter.py`) polls `signals WHERE alerted=0` every 2 seconds, applies quiet-hours / rate-limit logic, sends ntfy HTTP requests, then calls `db.mark_alerted(id)`. `CRITICAL` signals bypass both rate limiting and quiet hours — including Truth Social posts that classify as `CRITICAL` (see Signal priorities).
 3. **Correlation detector** (`sentinel/collectors/correlation_detector.py`) runs a SQL self-join query every 5 minutes looking for HIGH/CRITICAL events from 2+ distinct sources within any 10-minute window. If found, it inserts a CRITICAL `correlated_signal` — which the alerter then dispatches normally.
 4. **Dashboard** (`sentinel/dashboard/app.py`) is a read-only Flask app that queries the signals table directly.
 
@@ -63,7 +63,9 @@ Collectors ──insert_signal()──► signals table ──poll(alerted=0)─
 
 `INFO < LOW < MEDIUM < HIGH < CRITICAL`
 
-Quiet-hours suppression (`quiet_suppress_below` in config) applies to signals below the configured level. Truth Social signals are always `CRITICAL` and are never suppressed.
+Quiet-hours suppression (`quiet_suppress_below` in config) applies to signals below the configured level.
+
+Truth Social posts are priority-tiered by `classify_priority()` in `truth_social.py` (not blanket-`CRITICAL`): any market-moving keyword → `CRITICAL`; routine endorsement language with no keyword → `LOW`; everything else (incl. media-only posts) → the configured default (`MEDIUM`). Only the `CRITICAL` (keyword-matched) posts bypass rate limiting and quiet hours; `LOW`/`MEDIUM` Truth Social posts are subject to normal suppression. This tiering (commit `551e1dd`) replaced the old always-`CRITICAL` behaviour, which flooded the alerter with routine candidate endorsements and anchored false correlations.
 
 ### Truth Social collector (Playwright)
 
@@ -103,7 +105,7 @@ Config is loaded once at startup and not reloaded. To apply config changes, rest
 
 Unit tests in `tests/unit/` use inline YAML fixtures rather than fixture files. See `test_config.py` for the `VALID_CONFIG_YAML` pattern used across test files. Tests do not hit real APIs or the filesystem (except for tempfile-based DB tests). The Truth Social tests mock the client at the protocol boundary (no Playwright needed to run tests).
 
-**Known pre-existing test failures** (not related to recent changes): `test_db.py` (2), `test_correlation_detector.py` (1), `test_futures_volume.py` (2), `test_polymarket.py` (4). All truth social, config, alerter, and dashboard tests pass.
+**Known pre-existing test failures** (not related to recent changes): `test_db.py` (1), `test_futures_volume.py` (2), `test_polymarket.py` (5) — 8 total. The `test_polymarket` failures are not hermetic: several try to reach the live API (DNS/network errors) since Polymarket is DNS-blocked here. All truth social, config, alerter, correlation detector, and dashboard tests pass.
 
 ## PDF Processing
 When extracting data from PDFs to CSV, read and process PDFs one at a time to minimize token usage. Save intermediate results after each PDF so progress isn't lost if the session is interrupted. Always confirm the output CSV format with the user before processing multiple files.

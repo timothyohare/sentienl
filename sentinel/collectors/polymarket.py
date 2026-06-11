@@ -10,11 +10,12 @@ Signal types generated:
   - odds_move:    5+ percentage point shift in < 5 min (tracked via state)
   - volume_spike: Trade volume 3x 24hr average in 10-min window
 
-NOTE: The gamma-api.polymarket.com API was DNS-blocked from the development
-machine and could not be verified. All signal generation logic is implemented
-and unit-tested with mocked HTTP responses. Verify API availability from
-the deployment server before relying on this collector in production.
-See human_todo.md for verification steps.
+NOTE: Polymarket is now classified as an illegal online gambling service in
+Australia under the Interactive Gambling Act 2001 (ACMA block), and
+gamma-api.polymarket.com is also DNS-blocked from this machine. This collector
+should NOT be relied upon from Australian infrastructure. Use the Kalshi
+collector (collectors/kalshi.py) instead. The code is retained for reference
+and potential use from unblocked infrastructure only.
 """
 
 import json
@@ -429,8 +430,9 @@ class PolymarketCollector:
         """Main polling loop. Blocks forever."""
         logger.info("PolymarketCollector starting up")
         logger.warning(
-            "NOTE: gamma-api.polymarket.com was DNS-blocked from the dev machine. "
-            "Verify API access from the deployment server. See human_todo.md."
+            "NOTE: Polymarket is ACMA-blocked in Australia (Interactive Gambling "
+            "Act 2001) and gamma-api.polymarket.com is DNS-blocked here. Do not "
+            "rely on this collector from Australian infrastructure — use Kalshi."
         )
         error_attempt = 0
 
