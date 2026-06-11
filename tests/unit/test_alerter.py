@@ -435,3 +435,59 @@ class TestPollLoop:
         with patch.object(alerter, "dispatch_signal") as mock_dispatch:
             alerter.poll_once()
         mock_dispatch.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL bypass — full dispatch pipeline (not just the predicates in isolation)
+# ---------------------------------------------------------------------------
+
+class TestCriticalBypassEndToEnd:
+    def test_critical_bypasses_quiet_hours_and_rate_limit(self, alerter):
+        # Arm the rate limiter for the source AND put the clock inside quiet
+        # hours (17:00–21:00). A CRITICAL signal must still be dispatched.
+        sig = make_signal(source="truth_social", priority="CRITICAL", signal_id=1)
+        alerter._rate_limiter.record_sent("truth_social")
+        with patch.object(alerter, "send_ntfy", return_value=True) as mock_send:
+            sent = alerter.dispatch_signal(sig, now_utc=time(18, 0))
+        assert sent is True
+        mock_send.assert_called_once()
+
+    def test_non_critical_blocked_under_same_conditions(self, alerter):
+        # Control: a HIGH signal under the same armed rate limiter is suppressed,
+        # proving the bypass above is a real effect and not a vacuous assertion.
+        sig = make_signal(
+            source="futures_oil", signal_type="volume_spike",
+            priority="HIGH", signal_id=2,
+        )
+        alerter._rate_limiter.record_sent("futures_oil")
+        with patch.object(alerter, "send_ntfy", return_value=True) as mock_send:
+            sent = alerter.dispatch_signal(sig, now_utc=time(11, 0))
+        assert sent is False
+        mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Quiet hours with a midnight-crossing window (e.g. 23:00–06:00)
+# ---------------------------------------------------------------------------
+
+class TestMidnightCrossingQuietHours:
+    @staticmethod
+    def _alerter_with_quiet(db, start, end):
+        cfg = MagicMock()
+        cfg.alerts.ntfy_topic = "sentinel-test"
+        cfg.alerts.ntfy_url = "https://ntfy.sh"
+        cfg.alerts.rate_limit_minutes = 5
+        cfg.alerts.quiet_hours_utc.start = start
+        cfg.alerts.quiet_hours_utc.end = end
+        cfg.alerts.quiet_suppress_below = "MEDIUM"
+        return Alerter(config=cfg, db=db)
+
+    def test_low_suppressed_inside_overnight_window(self, mock_db):
+        a = self._alerter_with_quiet(mock_db, time(23, 0), time(6, 0))
+        # 01:00 is inside the overnight window
+        assert a.is_suppressed_by_quiet_hours("LOW", time(1, 0)) is True
+
+    def test_low_sent_outside_overnight_window(self, mock_db):
+        a = self._alerter_with_quiet(mock_db, time(23, 0), time(6, 0))
+        # 10:00 is outside the overnight window
+        assert a.is_suppressed_by_quiet_hours("LOW", time(10, 0)) is False

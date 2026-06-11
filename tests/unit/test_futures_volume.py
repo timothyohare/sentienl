@@ -249,11 +249,15 @@ class TestVolumeHistory:
         collector.add_volume_observation("CL=F", 500)
         assert len(collector._volume_history["CL=F"]) == 1
 
-    def test_volume_history_capped_at_rolling_bars(self, collector):
-        for i in range(30):
+    def test_volume_history_capped_at_history_max_bars(self, collector):
+        # History is bounded at HISTORY_MAX_BARS (the memory cap), not at
+        # rolling_bars (which is only the averaging window). Add well past the
+        # cap and assert it does not grow unbounded.
+        from sentinel.collectors.futures_volume import HISTORY_MAX_BARS
+        for i in range(HISTORY_MAX_BARS + 50):
             collector.add_volume_observation("CL=F", i * 100)
         history = collector._volume_history["CL=F"]
-        assert len(history) <= collector._rolling_bars + 5  # small buffer allowed
+        assert len(history) == HISTORY_MAX_BARS
 
     def test_volume_history_independent_per_ticker(self, collector):
         collector.add_volume_observation("CL=F", 500)
@@ -275,13 +279,9 @@ class TestSignalCreation:
             collector.add_volume_observation("CL=F", bar["volume"])
 
         instrument = mock_config_instrument("CL=F", "WTI Oil", 500)
-        with patch("sentinel.collectors.futures_volume.datetime") as mock_dt:
-            from datetime import datetime as real_datetime
-            mock_dt.now.return_value = real_datetime(2026, 3, 27, 14, 0, 0)
-            mock_dt.now.return_value.time.return_value = time(14, 0)
-            mock_dt.now.return_value.strftime.return_value = "2026-03-27"
-
-            collector.process_instrument(instrument, bars[-1], time(14, 0), "2026-03-27")
+        # process_instrument receives now_time and today_str directly — it does
+        # not call datetime.now() — so no patching is needed.
+        collector.process_instrument(instrument, bars[-1], time(14, 0), "2026-03-27")
 
         signals = mock_db.get_recent_signals()
         assert any(s["signal_type"] == "volume_spike" for s in signals)

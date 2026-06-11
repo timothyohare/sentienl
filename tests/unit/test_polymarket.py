@@ -180,6 +180,9 @@ class TestVolumeSpike:
 # ---------------------------------------------------------------------------
 
 class TestFetchMarket:
+    @pytest.mark.skip(reason="Polymarket deprecated (ACMA-blocked); non-hermetic "
+                             "— collector uses httpx, which `responses` does not "
+                             "intercept, so this hits the live (DNS-blocked) API.")
     @responses_lib.activate
     def test_fetch_market_success(self, collector):
         responses_lib.add(
@@ -229,6 +232,9 @@ class TestFetchMarket:
 # ---------------------------------------------------------------------------
 
 class TestFetchRecentTrades:
+    @pytest.mark.skip(reason="Polymarket deprecated (ACMA-blocked); non-hermetic "
+                             "— collector uses httpx, which `responses` does not "
+                             "intercept, so this hits the live (DNS-blocked) API.")
     @responses_lib.activate
     def test_fetch_trades_success(self, collector):
         condition_id = "0xabc123"
@@ -300,6 +306,9 @@ class TestWalletAgeLookup:
         assert age is not None
         assert len(responses_lib.calls) == 0
 
+    @pytest.mark.skip(reason="Polymarket deprecated (ACMA-blocked); non-hermetic "
+                             "— collector uses httpx, which `responses` does not "
+                             "intercept, so this hits the live (DNS-blocked) API.")
     @responses_lib.activate
     def test_get_wallet_age_cache_miss_with_api_key(self, collector):
         collector._polygonscan_api_key = "test-key"
@@ -347,6 +356,9 @@ class TestPolymarketState:
 # ---------------------------------------------------------------------------
 
 class TestProcessMarket:
+    @pytest.mark.skip(reason="Polymarket deprecated (ACMA-blocked); non-hermetic "
+                             "— collector uses httpx, which `responses` does not "
+                             "intercept, so this hits the live (DNS-blocked) API.")
     @responses_lib.activate
     def test_large_bet_creates_signal(self, collector, mock_db):
         large_trade = dict(SAMPLE_TRADE)

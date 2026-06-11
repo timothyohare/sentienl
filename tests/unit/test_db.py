@@ -44,7 +44,7 @@ class TestDatabaseInit:
         assert result == 1
 
     def test_all_tables_created(self, tmp_db):
-        tables = {row[0] for row in tmp_db.execute_fetchall(
+        tables = {row["name"] for row in tmp_db.execute_fetchall(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
         assert "signals" in tables

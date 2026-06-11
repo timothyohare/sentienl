@@ -70,7 +70,9 @@ def _is_odds_move(
     """Return True if the odds have moved by >= threshold_pct percentage points."""
     if previous is None:
         return False
-    change_pp = abs(current - previous) * 100
+    # Round before comparing: float representation makes e.g. (0.60 - 0.55)*100
+    # evaluate to 4.999999999999 and miss an exact threshold-sized move.
+    change_pp = round(abs(current - previous) * 100, 9)
     return change_pp >= threshold_pct
 
 

@@ -165,3 +165,22 @@ class TestCheckInterval:
     def test_custom_check_interval(self, mock_config, mock_db):
         d = CorrelationDetector(config=mock_config, db=mock_db, check_interval_seconds=60)
         assert d.check_interval_seconds == 60
+
+
+# ---------------------------------------------------------------------------
+# Window boundary
+# ---------------------------------------------------------------------------
+
+class TestWindowBoundary:
+    def test_correlates_at_exact_window_boundary(self, detector, mock_db):
+        """Two sources exactly window_minutes apart still correlate (the SQL
+        bound is inclusive: datetime(s2) <= datetime(anchor, '+N minutes'))."""
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        insert_signal_at(
+            mock_db, "truth_social",
+            (now - timedelta(minutes=10)).isoformat(), "HIGH",
+        )
+        insert_signal_at(mock_db, "futures_oil", now.isoformat(), "HIGH")
+        mock_db._conn.commit()
+        assert detector.check_correlation() is True
