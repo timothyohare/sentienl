@@ -2,8 +2,9 @@
 collectors/correlation_detector.py — Multi-source signal correlation detector.
 
 Runs a pure SQL query every 5 minutes against the signals table to find
-10-minute windows where HIGH/CRITICAL events fired from 2+ distinct sources.
-If found, fires a CRITICAL "CORRELATED SIGNAL" alert via the signals table.
+clusters where HIGH/CRITICAL events fired from 2+ distinct sources within
+window_minutes of a common anchor event. If found, fires a CRITICAL
+"CORRELATED SIGNAL" alert via the signals table.
 
 This is the single highest-leverage feature in Sentinel: a single-source alert
 has low signal-to-noise; correlated alerts across Truth Social + Kalshi +
@@ -46,7 +47,13 @@ class CorrelationDetector:
         # cluster surfaces as several overlapping anchors (each source sees the
         # others); collapsing them via a window-length cooldown means one
         # cluster yields one alert instead of one-per-source.
-        self._last_fired_time: Optional[datetime] = None
+        #
+        # Loaded from db.state so the cooldown survives a process restart —
+        # otherwise a restart inside the lookback window re-fires the exact
+        # duplicate correlations this cooldown exists to suppress.
+        self._last_fired_time: Optional[datetime] = self._parse_dt(
+            self.db.state.get(CORRELATION_SIGNAL_DEDUP_KEY)
+        )
 
     # ------------------------------------------------------------------
     # Core logic
@@ -122,6 +129,10 @@ class CorrelationDetector:
             self._fired_on_anchors.add(anchor_id)
             if anchor_dt is not None:
                 self._last_fired_time = anchor_dt
+                # Persist so the cooldown survives a restart (see __init__).
+                self.db.state.set(
+                    CORRELATION_SIGNAL_DEDUP_KEY, anchor_dt.isoformat()
+                )
 
     @staticmethod
     def _parse_dt(value: str) -> Optional[datetime]:

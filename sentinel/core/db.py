@@ -367,11 +367,15 @@ class Database:
 
     def get_correlated_signals_in_window(self, minutes: int = 10) -> List[Dict[str, Any]]:
         """
-        Find HIGH/CRITICAL signals from 2+ distinct sources within the last `minutes` minutes.
+        Find HIGH/CRITICAL signals from 2+ distinct sources correlated with a
+        recent anchor event.
 
         Returns a list of dicts describing the correlated windows found.
-        Uses a pure SQL approach: for each recent HIGH/CRITICAL signal, count distinct sources
-        within ±minutes/2 of that signal's timestamp.
+        Uses a pure SQL approach: for each HIGH/CRITICAL signal in the last
+        `minutes`*2 minutes (the anchor), count distinct sources within
+        ±`minutes` of that anchor's timestamp. So `minutes` is the maximum gap
+        between any correlated event and its anchor (a cluster can therefore
+        span up to 2*`minutes` end-to-end).
         """
         conn = self._get_conn()
         # NOTE: created_at is stored as ISO-8601 with a 'T' separator and a

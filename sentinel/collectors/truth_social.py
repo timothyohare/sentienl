@@ -66,8 +66,17 @@ def classify_priority(
     with routine candidate endorsements and let them anchor false correlations.
     """
     t = (text or "").lower()
-    if any(kw.lower() in t for kw in critical_keywords):
+    # Market keywords escalate to CRITICAL and bypass quiet hours / rate limits,
+    # so they must match on whole-word boundaries (allowing an optional plural
+    # 's'). A naive substring match mints false CRITICALs from "war" inside
+    # "warning", "oil" inside "boil", "deal" inside "ideal", etc.
+    if any(
+        re.search(r"\b" + re.escape(kw.lower()) + r"s?\b", t)
+        for kw in critical_keywords
+    ):
         return "CRITICAL"
+    # Endorsement markers only DEMOTE to LOW, so a looser substring match is
+    # fine and desirable — it catches inflections like "endorsed"/"endorsing".
     if any(m.lower() in t for m in endorsement_markers):
         return "LOW"
     return default_priority
