@@ -45,6 +45,26 @@ SOURCE_MAP = {
 # Pure helper functions
 # ---------------------------------------------------------------------------
 
+def _canonical_ts(ts: Any) -> Optional[str]:
+    """
+    Normalise a bar timestamp to a canonical UTC ISO-8601 string for dedup.
+
+    Sources disagree on format — Alpaca emits `...Z`, yfinance emits `...+00:00`
+    for the same instant — so the raw string can't be used as a dedup key across
+    sources. Parse to an aware UTC datetime and re-serialise. Falls back to
+    str(ts) if the value is missing or unparseable.
+    """
+    if ts is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return str(ts)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 def _compute_rolling_average(volumes: List[Optional[float]], bars: int) -> float:
     """
     Return the mean of the last `bars` non-None volumes.
@@ -265,13 +285,13 @@ class FuturesVolumeCollector:
         # polls. Process each bar timestamp exactly once, otherwise we re-pollute
         # the rolling average and re-fire the same spike. Bars without a
         # timestamp can't be deduped and fall through to per-poll processing.
-        bar_ts = latest_bar.get("timestamp")
+        bar_ts = _canonical_ts(latest_bar.get("timestamp"))
         if bar_ts is not None:
             state_key = STATE_KEY_LAST_BAR.format(ticker=ticker)
-            if self.db.state.get(state_key) == str(bar_ts):
+            if self.db.state.get(state_key) == bar_ts:
                 logger.debug("%s: bar %s already processed — skipping", ticker, bar_ts)
                 return
-            self.db.state.set(state_key, str(bar_ts))
+            self.db.state.set(state_key, bar_ts)
 
         current_volume = latest_bar.get("volume")
         close_price = latest_bar.get("close", 0.0) or 0.0

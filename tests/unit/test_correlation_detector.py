@@ -171,6 +171,33 @@ class TestCheckInterval:
 # Window boundary
 # ---------------------------------------------------------------------------
 
+class TestCooldownParity:
+    def test_check_correlation_agrees_with_check_and_signal_during_cooldown(
+        self, detector, mock_db
+    ):
+        """check_correlation() must apply the same cooldown as check_and_signal()
+        — otherwise the two disagree (read says 'correlation!' while the writer
+        suppresses it)."""
+        insert_signal_now(mock_db, "truth_social", "HIGH")
+        insert_signal_now(mock_db, "futures_oil", "HIGH")
+        mock_db._conn.commit()
+        detector.check_and_signal()  # first fire arms the cooldown
+
+        # A third source arrives inside the cooldown window — a brand-new anchor
+        # that check_and_signal() would suppress via the cooldown.
+        insert_signal_now(mock_db, "polymarket", "HIGH")
+        mock_db._conn.commit()
+
+        # Both views must agree: nothing new is reported or fired.
+        assert detector.check_correlation() is False
+        detector.check_and_signal()
+        correlated = [
+            s for s in mock_db.get_recent_signals()
+            if s["signal_type"] == "correlated_signal"
+        ]
+        assert len(correlated) == 1
+
+
 class TestWindowBoundary:
     def test_correlates_at_exact_window_boundary(self, detector, mock_db):
         """Two sources exactly window_minutes apart still correlate (the SQL

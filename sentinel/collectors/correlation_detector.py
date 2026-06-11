@@ -59,22 +59,36 @@ class CorrelationDetector:
     # Core logic
     # ------------------------------------------------------------------
 
+    def _is_fireable(self, window: Dict[str, Any]) -> bool:
+        """
+        Return True if this window should produce a correlation alert given
+        current state. Encapsulates BOTH dedup rules so check_correlation() and
+        check_and_signal() can never disagree:
+          - the anchor has not already been correlated, AND
+          - we are not inside the post-fire cooldown (one cluster -> one alert).
+        """
+        if window.get("anchor_id") in self._fired_on_anchors:
+            return False
+        anchor_dt = self._parse_dt(window.get("anchor_time", ""))
+        if (
+            anchor_dt is not None
+            and self._last_fired_time is not None
+            and abs((anchor_dt - self._last_fired_time).total_seconds())
+            <= self.window_minutes * 60
+        ):
+            return False
+        return True
+
     def check_correlation(self) -> bool:
         """
         Query the DB for correlated multi-source HIGH/CRITICAL signals
         within the configured window.
 
-        Returns True if at least one uncorrelated multi-source window was found.
+        Returns True if at least one fireable multi-source window was found —
+        applying the same dedup/cooldown rules as check_and_signal().
         """
         windows = self.db.get_correlated_signals_in_window(minutes=self.window_minutes)
-        if not windows:
-            return False
-        # Check if any of these are new (not yet correlated)
-        for window in windows:
-            anchor_id = window.get("anchor_id")
-            if anchor_id not in self._fired_on_anchors:
-                return True
-        return False
+        return any(self._is_fireable(w) for w in windows)
 
     def check_and_signal(self) -> None:
         """
@@ -87,24 +101,17 @@ class CorrelationDetector:
 
         for window in windows:
             anchor_id = window.get("anchor_id")
-            if anchor_id in self._fired_on_anchors:
+            # Same dedup/cooldown rule as check_correlation(). When a window is
+            # not fireable (already fired, or inside the cooldown), record the
+            # anchor as seen so overlapping cluster anchors collapse to one alert.
+            if not self._is_fireable(window):
+                self._fired_on_anchors.add(anchor_id)
                 continue
 
             sources = window.get("sources", "multiple")
             source_count = window.get("source_count", 0)
             anchor_time = window.get("anchor_time", "")
-
-            # Collapse overlapping anchors of the same cluster: skip if we
-            # already fired a correlation within window_minutes of this anchor.
             anchor_dt = self._parse_dt(anchor_time)
-            if (
-                anchor_dt is not None
-                and self._last_fired_time is not None
-                and abs((anchor_dt - self._last_fired_time).total_seconds())
-                <= self.window_minutes * 60
-            ):
-                self._fired_on_anchors.add(anchor_id)
-                continue
 
             logger.warning(
                 "CORRELATED SIGNAL: %d sources (%s) within %d-minute window at %s",

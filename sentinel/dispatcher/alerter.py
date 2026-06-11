@@ -6,7 +6,10 @@ rate limiting and quiet hours enforcement, then sends push notifications via
 ntfy. Updates alerted=1 after successful send.
 
 Priority levels (ascending): INFO < LOW < MEDIUM < HIGH < CRITICAL
-Truth Social (CRITICAL) signals are NEVER rate-limited or quiet-hour-suppressed.
+CRITICAL signals (from any source) are NEVER rate-limited or quiet-hour-
+suppressed. Truth Social posts are priority-tiered upstream (only market-moving
+posts classify as CRITICAL), so routine LOW/MEDIUM posts are subject to the
+normal rate-limit and quiet-hours rules like any other source.
 """
 
 import logging

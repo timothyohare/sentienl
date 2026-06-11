@@ -355,6 +355,26 @@ class TestBarDeduplication:
         assert any(s["signal_type"] == "volume_spike" for s in signals)
 
 
+class TestTimestampNormalization:
+    """The same instant in different ISO formats (Z vs +00:00) must dedupe to one
+    signal — otherwise switching data source (Alpaca 'Z' vs yfinance '+00:00')
+    re-processes the same bar."""
+
+    def test_equivalent_timestamps_dedupe(self, collector, mock_db):
+        instrument = mock_config_instrument("CL=F", "WTI Oil", 500)
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 500)
+        bar_z = {"volume": 5000, "close": 76.0, "open": 75.0,
+                 "timestamp": "2026-03-27T14:00:00Z"}
+        bar_offset = {"volume": 5000, "close": 76.0, "open": 75.0,
+                      "timestamp": "2026-03-27T14:00:00+00:00"}
+        collector.process_instrument(instrument, bar_z, time(14, 0), "2026-03-27")
+        collector.process_instrument(instrument, bar_offset, time(14, 0), "2026-03-27")
+        spikes = [s for s in mock_db.get_recent_signals()
+                  if s["signal_type"] == "volume_spike"]
+        assert len(spikes) == 1
+
+
 def mock_config_instrument(ticker, name, min_vol):
     inst = MagicMock()
     inst.ticker = ticker
