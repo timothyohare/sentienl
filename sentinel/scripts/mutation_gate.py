@@ -13,13 +13,21 @@ this script's own pass/fail exit code is what actually gates.
 
 MIN_SCORE is 0.0: this repo had no mutation testing before this gate was
 wired in (2026-08-03). First baseline run: 27.5% (killed=1433,
-survived=1856, no_tests=1919, total=5208) — left as a no-op floor
-deliberately, not raised to ~27. Raising MIN_SCORE is a real policy
-decision — how much of the 1919 no-coverage mutants is acceptable, which
-modules matter most — that deserves an actual look at `mutmut results`
-first, not a threshold picked
-to match whatever the first run happened to produce. Mirrors rotrade's
-scripts/mutation_gate.py in structure; do not lower a threshold once set,
+survived=1856, no_tests=1919, total=5208, before do_not_mutate excluded
+thin *_runner.py/scripts/* entrypoints as unkillable noise). After a
+2026-08-03 pass writing targeted tests for correlation_detector, config,
+alerter, db, kalshi, truth_social, futures_volume, and dashboard/app
+(prioritised by survivor count and business-logic weight; polymarket.py
+skipped as ACMA-blocked/deprecated per CLAUDE.md): 52.5% (killed=2341,
+survived=943, no_tests=1171, total=4455). Remaining no_tests is mostly
+run()-style main loops (same category as the excluded runner files, just
+inside the class) and I/O-boundary code (_fetch_alpaca/_fetch_yfinance,
+the Truth Social Playwright client) that's deliberately not unit-tested
+at that boundary. MIN_SCORE is still left as a no-op floor — raising it
+is a real policy decision that deserves an actual look at `mutmut
+results` first, not a threshold picked to match whatever a run happened
+to produce. Mirrors rotrade's scripts/mutation_gate.py in structure; do
+not lower a threshold once set,
 to make a later regression pass.
 """
 
