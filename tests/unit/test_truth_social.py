@@ -377,6 +377,9 @@ ENDORSE = ["endorse", "endorsement"]
 
 
 class TestClassifyPriority:
+    def test_none_text_treated_as_empty(self):
+        assert classify_priority(None, CRIT_KW, ENDORSE, "MEDIUM") == "MEDIUM"
+
     def test_market_keyword_is_critical(self):
         assert classify_priority(
             "Tariffs are great for America!", CRIT_KW, ENDORSE, "MEDIUM"
@@ -424,3 +427,141 @@ class TestProcessPostPriority:
         collector.process_post(FAKE_POST_1)  # "We are winning!"
         sig = mock_db.get_recent_signals()[0]
         assert sig["priority"] == "MEDIUM"
+
+
+# ---------------------------------------------------------------------------
+# HTML stripping — tag-specific space insertion
+# ---------------------------------------------------------------------------
+
+class TestHtmlStripperTagHandling:
+    def test_br_and_p_insert_space(self):
+        assert _extract_text("<p>a</p><p>b</p>") == "a b"
+        assert _extract_text("a<br>b") == "a b"
+
+    def test_other_tags_do_not_insert_space(self):
+        """Only br/p trigger a space — a tag like <div> or <span> must not,
+        or adjacent text would get spuriously separated."""
+        assert _extract_text("<div>a</div><div>b</div>") == "ab"
+        assert _extract_text("<span>a</span><span>b</span>") == "ab"
+
+
+# ---------------------------------------------------------------------------
+# _build_summary — missing id and exact truncation boundary
+# ---------------------------------------------------------------------------
+
+class TestBuildSummaryDetail:
+    def test_missing_id_defaults_to_question_mark(self):
+        summary = _build_summary({}, text="hello")
+        assert summary == "New Trump post [?]: hello"
+
+    def test_exact_120_chars_not_truncated(self):
+        text = "x" * 120
+        summary = _build_summary(FAKE_POST_1, text=text)
+        assert summary == f"New Trump post [{FAKE_POST_1['id']}]: {text}"
+
+    def test_121_chars_truncated_with_ellipsis(self):
+        text = "x" * 121
+        summary = _build_summary(FAKE_POST_1, text=text)
+        assert summary == f"New Trump post [{FAKE_POST_1['id']}]: {'x' * 120}..."
+
+
+# ---------------------------------------------------------------------------
+# filter_new_posts — invalid last_post_id falls back to "all posts are new"
+# ---------------------------------------------------------------------------
+
+class TestFilterNewPostsInvalidId:
+    def test_non_numeric_last_post_id_treats_all_as_new(self, collector):
+        posts = [FAKE_POST_2, FAKE_POST_1]
+        new_posts = collector.filter_new_posts(posts, last_post_id="not-a-number")
+        assert len(new_posts) == 2
+        assert new_posts[0]["id"] == FAKE_POST_1["id"]  # oldest first
+
+
+# ---------------------------------------------------------------------------
+# __init__ — every field wired from config, including the getattr/or
+# fallback-to-default chains for critical_keywords / endorsement_markers /
+# default_priority.
+# ---------------------------------------------------------------------------
+
+class TestInitWiring:
+    def test_config_and_poll_interval_and_handle(self, collector, mock_config):
+        assert collector.config is mock_config
+        assert collector._poll_interval == 8
+        assert collector._account_handle == "realDonaldTrump"
+
+    def test_alert_all_posts_stored(self, mock_config, mock_db, mock_client):
+        mock_config.truth_social.alert_all_posts = False
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        assert c._alert_all_posts is False
+
+    def test_consecutive_errors_starts_zero(self, collector):
+        assert collector._consecutive_errors == 0
+
+    def test_custom_critical_keywords_kept_as_is(self, collector):
+        assert collector._critical_keywords == ["tariff", "china", "war", "fed"]
+
+    def test_empty_critical_keywords_falls_back_to_defaults(
+        self, mock_config, mock_db, mock_client
+    ):
+        mock_config.truth_social.critical_keywords = []
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        from sentinel.collectors.truth_social import DEFAULT_CRITICAL_KEYWORDS
+        assert c._critical_keywords == DEFAULT_CRITICAL_KEYWORDS
+
+    def test_custom_endorsement_markers_kept_as_is(self, collector):
+        assert collector._endorsement_markers == ["endorse", "endorsement"]
+
+    def test_empty_endorsement_markers_falls_back_to_defaults(
+        self, mock_config, mock_db, mock_client
+    ):
+        mock_config.truth_social.endorsement_markers = []
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        from sentinel.collectors.truth_social import DEFAULT_ENDORSEMENT_MARKERS
+        assert c._endorsement_markers == DEFAULT_ENDORSEMENT_MARKERS
+
+    def test_custom_default_priority_kept(self, mock_config, mock_db, mock_client):
+        mock_config.truth_social.default_priority = "HIGH"
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        assert c._default_priority == "HIGH"
+
+    def test_none_default_priority_falls_back(self, mock_config, mock_db, mock_client):
+        mock_config.truth_social.default_priority = None
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        from sentinel.collectors.truth_social import DEFAULT_POST_PRIORITY
+        assert c._default_priority == DEFAULT_POST_PRIORITY
+
+
+# ---------------------------------------------------------------------------
+# process_post — alert_all_posts=True bypasses the keyword filter entirely
+# ---------------------------------------------------------------------------
+
+class TestAlertAllPostsBypassesFilter:
+    def test_alert_all_posts_true_ignores_non_matching_filter(
+        self, mock_config, mock_db, mock_client
+    ):
+        """A real bug this guards against: `and` vs `or` in the skip
+        condition. With alert_all_posts=True, a post must be written even
+        if it fails a (here irrelevant) keyword filter."""
+        mock_config.truth_social.alert_all_posts = True
+        mock_config.truth_social.keyword_filter = ["nonmatching-keyword"]
+        c = TruthSocialCollector(config=mock_config, db=mock_db, client=mock_client)
+        result = c.process_post(FAKE_POST_1)  # "We are winning!" — no filter match
+        assert result is not None
+        assert len(mock_db.get_recent_signals()) == 1
+
+
+# ---------------------------------------------------------------------------
+# fetch_posts / backfill — default limits forwarded correctly
+# ---------------------------------------------------------------------------
+
+class TestFetchPostsDefaults:
+    def test_default_limit_is_20(self, collector, mock_client):
+        collector.fetch_posts("acct")
+        mock_client.fetch_posts.assert_called_once_with("acct", limit=20)
+
+
+class TestBackfillFetchesLimit20:
+    def test_backfill_requests_limit_20(self, collector, mock_client):
+        mock_client.fetch_posts.return_value = []
+        collector.backfill("acct-id")
+        mock_client.fetch_posts.assert_called_once_with("acct-id", limit=20)
