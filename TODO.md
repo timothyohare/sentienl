@@ -1,6 +1,6 @@
 # Sentinel — Next Steps
 
-_Updated 2 June 2026_
+_Updated 3 August 2026_
 
 ---
 
@@ -36,6 +36,10 @@ _Updated 2 June 2026_
 - [x] **Hardcoded fallback Truth Social account ID** in `config.yaml.example`
 - [x] **Kalshi collector** — replaces Polymarket as prediction market source (blocked in AU by ACMA). Signals: `large_bet` (HIGH), `odds_move` (MEDIUM), `volume_spike` (MEDIUM). Public API, no auth required for read-only data. 33 unit tests.
 - [x] **Truth Social Playwright client** — Cloudflare blocks all direct HTTP to truthsocial.com. Added `truth_social_client.py` (headless Chromium login + in-browser fetch) and refactored collector to use pluggable client protocol. Credentials via `.env` file or `TS_USERNAME`/`TS_PASSWORD` env vars. 44 unit tests.
+- [x] **Signal-quality bug fixes (2026-06-10 → 2026-08-03)** — futures bar-level dedup, correlation-window timestamp-format bug (was collapsing the match window to the whole previous UTC day), Truth Social priority tiering (`classify_priority()`: keywords→CRITICAL, endorsements→LOW, else configurable default — replaced the old always-CRITICAL behaviour that flooded the alerter), Kalshi cold-start backlog flood in `_process_trades` (first-ever poll was evaluating Kalshi's whole 50-trade history backlog for `large_bet`). See `CLAUDE.md` and `docs/sentinel-analysis-2026-06-10.md` for detail.
+- [x] **systemd --user supervision** (`plans/04-systemd-supervision.md`) — alerter, Truth Social, Kalshi, and futures collectors run as `systemd --user` units in `deploy/systemd/` with `Restart=always`; `loginctl enable-linger` set so they survive logout/reboot. No root required. The old root-level `systemd/` directory (system-wide units, no Kalshi, includes deprecated Polymarket) has been deleted.
+- [x] **Quality harness wiring** (`.claude/harness.json`) — lint (ruff), typecheck (mypy), test (pytest), and mutation score (mutmut via `sentinel/scripts/mutation_gate.py`) bound to the shared code-build-harness gates. Mutation score raised 27.5% → 52.5% via targeted tests on business-logic modules (`polymarket.py` left untouched, deprecated).
+- [x] **Price follow-through pipeline** (`plans/05-price-follow-through.md`) — real event-study measurement replacing the burst/correlation proxies. `kalshi.py`/`futures_volume.py` snapshot `price_t0` for HIGH/CRITICAL signals; new `sentinel/scripts/price_followup.py` backfills t15/t60/t240/t1440 on a 5-min timer (`sentinel-price-followup.service`, installed and running); new `sentinel/scripts/signal_scorecard.py` computes per-signal-type effect size vs. a documented pooled baseline. `truth_social` not yet tracked (no instrument on the payload).
 
 ---
 
@@ -43,14 +47,14 @@ _Updated 2 June 2026_
 
 - [x] **Spike: Validate Truth Social API from deployment machine** — Cloudflare blocks direct HTTP from this IP. Solved with Playwright headless browser: navigates to site (passes JS challenge), logs in via web UI, uses in-browser `fetch()` for API calls. Confirmed working: posts fetched successfully, repeated polling stable.
 - [x] **~~Spike: Validate Polymarket gamma API~~** — **Blocked.** Polymarket is now classified as an illegal online gambling service in Australia by ACMA under the Interactive Gambling Act 2001. DNS-blocked nationally, not just from the dev machine. Replaced by Kalshi collector.
-- [x] **Spike: Validate Kalshi API from deployment machine** — Public API confirmed working. Built full collector with `large_bet`, `odds_move`, `volume_spike` signals. No auth required for read-only endpoints. No geo-block from Australia. Remaining task: find and configure relevant geopolitical event tickers in `config.yaml` before going live.
+- [x] **Spike: Validate Kalshi API from deployment machine** — Public API confirmed working. Built full collector with `large_bet`, `odds_move`, `volume_spike` signals. No auth required for read-only endpoints. No geo-block from Australia. `config.yaml` now tracks 5 event tickers (Greenland acquisition, US territory expansion, Taiwan escalation, US debt growth, government spending cuts).
 - [x] **Spike: Validate Alpaca free-tier futures data** — **Alpaca does not support futures.** Data API returns "invalid symbol" for CL=F, ES=F, etc. Zero assets in `futures` asset class. Alpaca covers stocks, crypto, and options only. Paper trading account active (keys in `.env`) — keep for potential stock/ETF monitoring pivot. **yfinance (v1.4.1) is the sole futures data source:** all 6 instruments working, ~10min latency on 1-min bars, volume data present, no rate limiting at 60s cadence. Pinned v0.2.40 was broken; updated `requirements.txt` to `>=1.4.0`. DX-Y.NYB has zero intraday volume — consider daily-only or dropping.
 
 ---
 
 ## Operational Setup (Before Going Live)
 
-- [x] **Wire `healthcheck.py` to cron** — installed: `7 * * * * .../healthcheck.py --heartbeat`. Runs hourly at :07, sends ntfy heartbeat. Monitored sources: `truth_social`, `kalshi`, `futures_oil`. Stale threshold: 30 minutes.
+- [ ] **Wire `healthcheck.py` to cron** — the crontab line exists (`crontab -l`) but is currently **commented out**, so the hourly ntfy heartbeat is not actually running. Process-level supervision is now handled by `systemd --user` (`Restart=always`), but that only catches a crashed process, not one that's alive and silently stuck — `healthcheck.py`'s cron heartbeat still fills that gap and should be re-enabled. See README.md for the crontab line.
 - [x] **Smoke test end-to-end** — `test_alert.py` sent successfully, ntfy notification received on phone. Topic: `sentinel-timohare-2026`.
 - [ ] **48-hour burn-in run** — run all services, suppress LOW/MEDIUM alerts, review signal/noise ratio daily
 
@@ -60,6 +64,14 @@ _Updated 2 June 2026_
 
 - [ ] Run a 1-week silent period after launch — log everything, suppress LOW/MEDIUM alerts, review signal/noise ratio daily
 - [ ] Document calibration process: which thresholds to adjust, what a "good" week of signals looks like
+
+---
+
+## Known Gaps (found during docs audit, 2026-08-03)
+
+- [ ] **Dashboard `/health` monitored-source list is stale** — `sentinel/dashboard/app.py`'s `health()` route still checks `"polymarket"` (always shows warn/err now that it's ACMA-blocked and unused) but doesn't check `"kalshi"` at all, despite Kalshi being the primary prediction-market source. Should swap one for the other.
+- [ ] **Price follow-through has no live data yet** — `signal_scorecard.py` needs at least a day of `price_followup.py` running to have a `t1440` sample worth reading. See `plans/05-price-follow-through.md`.
+- [ ] **Interactive Brokers as a futures/Kalshi price source** — an IB account already exists for the sibling `rotrade` project; swapping it in for yfinance would remove the ~10min delay that most affects the price-follow-through `t15` horizon. Not started.
 
 ---
 
