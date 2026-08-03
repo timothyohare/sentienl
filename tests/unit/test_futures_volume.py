@@ -515,16 +515,15 @@ class TestPriorityBranches:
         )
         assert sig["priority"] == "MEDIUM"
 
-    # NOTE: no test for the "LOW" priority branch (`else "LOW"` in
-    # process_instrument) — it appears to be unreachable dead code, not a
-    # gap in test coverage. Outside the active window, get_spike_multiplier()
-    # returns thresholds.spike_multiplier_quiet, and _detect_volume_spike
-    # only fires when ratio >= that same multiplier — so any spike detected
-    # outside the window already satisfies the `ratio >= spike_multiplier_quiet`
-    # HIGH-priority check too. LOW can only be reached if spike_multiplier_quiet
-    # < spike_multiplier, inverting the documented "quiet hours are stricter"
-    # invariant. Flagged for a human to confirm intent rather than silently
-    # "fixed" here.
+    # The "LOW" priority branch was confirmed unreachable and removed from
+    # process_instrument (2026-08-03): outside the active window,
+    # get_spike_multiplier() returns thresholds.spike_multiplier_quiet, and
+    # _detect_volume_spike only fires when ratio >= that same multiplier —
+    # so any spike detected outside the window already satisfies the
+    # `ratio >= spike_multiplier_quiet` HIGH-priority check. This holds
+    # regardless of the relative ordering of spike_multiplier and
+    # spike_multiplier_quiet, so there's no config under which LOW could
+    # have fired.
 
 
 class TestAddVolumeObservationEviction:

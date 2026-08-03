@@ -314,12 +314,13 @@ class FuturesVolumeCollector:
                          ticker, current_volume or 0, rolling_avg)
             return
 
-        # Determine priority based on ratio
+        # Determine priority based on ratio. Outside the active window,
+        # detection itself already requires ratio >= spike_multiplier_quiet
+        # (see get_spike_multiplier), so any spike fired there is HIGH by
+        # construction — a below-quiet-threshold spike can only occur inside
+        # the active window, where it's MEDIUM.
         ratio = spike["ratio"]
-        if ratio >= self._thresholds.spike_multiplier_quiet:
-            priority = "HIGH"
-        else:
-            priority = "MEDIUM" if self.is_in_active_window(now_time) else "LOW"
+        priority = "HIGH" if ratio >= self._thresholds.spike_multiplier_quiet else "MEDIUM"
 
         # Calculate price change estimate
         price_change_pct = (
