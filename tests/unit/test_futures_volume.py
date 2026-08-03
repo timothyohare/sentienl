@@ -7,6 +7,7 @@ import pytest
 
 from sentinel.collectors.futures_volume import (
     FuturesVolumeCollector,
+    _canonical_ts,
     _compute_rolling_average,
     _detect_volume_spike,
     _is_roll_date,
@@ -148,6 +149,34 @@ class TestDetectVolumeSpike:
             min_absolute_volume=500,
         )
         assert spike is None
+
+    def test_rolling_avg_exactly_1_is_valid_not_treated_as_zero(self):
+        spike = _detect_volume_spike(
+            current_volume=10, rolling_avg=1, spike_multiplier=3.0, min_absolute_volume=1,
+        )
+        assert spike is not None
+        assert spike["ratio"] == pytest.approx(10.0)
+
+
+class TestCanonicalTs:
+    def test_none_returns_none(self):
+        assert _canonical_ts(None) is None
+
+    def test_z_suffix_normalized(self):
+        assert _canonical_ts("2026-03-27T14:00:00Z") == "2026-03-27T14:00:00+00:00"
+
+    def test_offset_suffix_unchanged_semantically(self):
+        assert _canonical_ts("2026-03-27T14:00:00+00:00") == "2026-03-27T14:00:00+00:00"
+
+    def test_naive_timestamp_gets_utc(self):
+        assert _canonical_ts("2026-03-27T14:00:00") == "2026-03-27T14:00:00+00:00"
+
+    def test_unparseable_falls_back_to_str(self):
+        assert _canonical_ts("not-a-timestamp") == "not-a-timestamp"
+
+    def test_non_utc_offset_converted_to_utc(self):
+        # +05:00 14:00 is 09:00 UTC
+        assert _canonical_ts("2026-03-27T14:00:00+05:00") == "2026-03-27T09:00:00+00:00"
 
 
 # ---------------------------------------------------------------------------
@@ -397,3 +426,155 @@ class TestDataGapHandling:
         instrument = mock_config_instrument("CL=F", "WTI Oil", 500)
         bar_incomplete = {"volume": 500}
         collector.process_instrument(instrument, bar_incomplete, time(14, 0), "2026-03-27")
+
+
+# ---------------------------------------------------------------------------
+# Exact signal payload — process_instrument's payload dict has ~10 fields;
+# existing tests only checked "a volume_spike signal exists".
+# ---------------------------------------------------------------------------
+
+class TestSignalPayloadExact:
+    def test_exact_payload_fields(self, collector, mock_db):
+        instrument = mock_config_instrument("CL=F", "WTI Oil", 500)
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 400)
+        bar = {"volume": 2000, "close": 76.0, "open": 74.0,
+               "timestamp": "2026-03-27T14:00:00+00:00"}
+        collector.process_instrument(instrument, bar, time(14, 0), "2026-03-27")
+
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        payload = sig["payload"]
+        assert payload["ticker"] == "CL=F"
+        assert payload["name"] == "WTI Oil"
+        assert payload["current_volume"] == 2000
+        assert payload["average_volume"] == pytest.approx(400.0)
+        assert payload["ratio"] == pytest.approx(5.0, abs=0.01)
+        assert payload["price"] == 76.0
+        assert payload["price_change_pct"] == pytest.approx(
+            (76.0 - 74.0) / 74.0 * 100, abs=0.01
+        )
+        assert payload["spike_multiplier_used"] == 3.0
+        assert payload["in_active_window"] is True
+        assert sig["source"] == "futures_oil"
+        assert sig["summary"] == "Volume spike CL=F: 2,000 contracts (5.00x avg 400)"
+
+    def test_source_mapped_per_ticker(self, collector, mock_db):
+        instrument = mock_config_instrument("ES=F", "S&P 500", 200)
+        for _ in range(19):
+            collector.add_volume_observation("ES=F", 300)
+        bar = {"volume": 2000, "close": 5000.0, "open": 4990.0}
+        collector.process_instrument(instrument, bar, time(14, 0), "2026-03-27")
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        assert sig["source"] == "futures_sp500"
+
+    def test_open_price_zero_falls_back_to_close(self, collector, mock_db):
+        """open=0 is falsy — `or close_price` must trigger (not just a
+        missing key), otherwise price_change_pct divides by zero."""
+        instrument = mock_config_instrument("CL=F", "WTI Oil", 500)
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 400)
+        bar = {"volume": 2000, "close": 76.0, "open": 0}
+        collector.process_instrument(instrument, bar, time(14, 0), "2026-03-27")
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        # open falls back to close (76.0) -> price_change_pct == 0.0
+        assert sig["payload"]["price_change_pct"] == 0.0
+
+
+class TestPriorityBranches:
+    @staticmethod
+    def _instrument():
+        return mock_config_instrument("CL=F", "WTI Oil", 500)
+
+    def _fire(self, collector, mock_db, now_time):
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 400)
+        # ratio well above spike_multiplier_quiet=5.0 -> always HIGH regardless
+        bar = {"volume": 3000, "close": 76.0, "open": 75.0}
+        collector.process_instrument(self._instrument(), bar, now_time, "2026-03-27")
+        return next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+
+    def test_ratio_above_quiet_multiplier_is_high(self, collector, mock_db):
+        sig = self._fire(collector, mock_db, time(14, 0))
+        assert sig["priority"] == "HIGH"
+
+    def test_moderate_ratio_in_active_window_is_medium(self, collector, mock_db):
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 400)
+        bar = {"volume": 1600, "close": 76.0, "open": 75.0}  # 4x, below quiet(5x)
+        collector.process_instrument(self._instrument(), bar, time(14, 0), "2026-03-27")
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        assert sig["priority"] == "MEDIUM"
+
+    # NOTE: no test for the "LOW" priority branch (`else "LOW"` in
+    # process_instrument) — it appears to be unreachable dead code, not a
+    # gap in test coverage. Outside the active window, get_spike_multiplier()
+    # returns thresholds.spike_multiplier_quiet, and _detect_volume_spike
+    # only fires when ratio >= that same multiplier — so any spike detected
+    # outside the window already satisfies the `ratio >= spike_multiplier_quiet`
+    # HIGH-priority check too. LOW can only be reached if spike_multiplier_quiet
+    # < spike_multiplier, inverting the documented "quiet hours are stricter"
+    # invariant. Flagged for a human to confirm intent rather than silently
+    # "fixed" here.
+
+
+class TestAddVolumeObservationEviction:
+    def test_oldest_entry_evicted_when_over_cap(self, collector):
+        """del history[0] must drop the OLDEST observation, not history[1]."""
+        from sentinel.collectors.futures_volume import HISTORY_MAX_BARS
+        for i in range(HISTORY_MAX_BARS):
+            collector.add_volume_observation("CL=F", i)
+        collector.add_volume_observation("CL=F", 99999)  # pushes over the cap
+        history = collector._volume_history["CL=F"]
+        assert len(history) == HISTORY_MAX_BARS
+        assert history[0] == 1  # the original 0 was evicted, 1 is now oldest
+        assert history[-1] == 99999
+
+
+class TestFetchBarsAlpacaPriority:
+    def test_alpaca_success_skips_yfinance(self, collector):
+        collector._alpaca_api_key = "key"
+        alpaca_bars = [{"volume": 100, "close": 1.0, "open": 1.0}]
+        with (
+            patch.object(collector, "_fetch_alpaca", return_value=alpaca_bars) as mock_alpaca,
+            patch.object(collector, "_fetch_yfinance") as mock_yf,
+        ):
+            bars = collector.fetch_bars("CL=F")
+        mock_alpaca.assert_called_once()
+        mock_yf.assert_not_called()
+        assert bars == alpaca_bars
+
+    def test_alpaca_empty_falls_back_to_yfinance(self, collector):
+        collector._alpaca_api_key = "key"
+        yf_bars = [{"volume": 200, "close": 2.0, "open": 2.0}]
+        with (
+            patch.object(collector, "_fetch_alpaca", return_value=[]),
+            patch.object(collector, "_fetch_yfinance", return_value=yf_bars) as mock_yf,
+        ):
+            bars = collector.fetch_bars("CL=F")
+        mock_yf.assert_called_once()
+        assert bars == yf_bars
+
+
+class TestInitWiring:
+    def test_config_stored_by_identity(self, collector, mock_config):
+        assert collector.config is mock_config
+
+    def test_poll_interval_from_config(self, collector):
+        assert collector._poll_interval == 60
+
+    def test_alpaca_credentials_from_config(self, mock_config, mock_db):
+        mock_config.futures.alpaca_api_key = "ak"
+        mock_config.futures.alpaca_api_secret = "as"
+        c = FuturesVolumeCollector(config=mock_config, db=mock_db)
+        assert c._alpaca_api_key == "ak"
+        assert c._alpaca_api_secret == "as"
