@@ -4,6 +4,7 @@ Unit tests for collectors/kalshi.py.
 All tests use unittest.mock to patch the httpx client directly.
 """
 
+import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -334,3 +335,224 @@ class TestProcessMarket:
         assert payload["contracts"] == 200.0
         assert payload["ticker"] == "KXMIDEASTWAR-26JUN15"
         assert "market_title" in payload
+
+    def test_status_open_not_active_is_skipped(self, collector, mock_db):
+        """status check is an exact == 'active', not just any non-closed value."""
+        open_market = dict(SAMPLE_MARKET)
+        open_market["status"] = "open"
+        collector.process_market(open_market)
+        assert mock_db.get_recent_signals() == []
+
+    def test_status_check_is_case_sensitive(self, collector, mock_db):
+        upper_market = dict(SAMPLE_MARKET)
+        upper_market["status"] = "ACTIVE"
+        collector.process_market(upper_market)
+        assert mock_db.get_recent_signals() == []
+
+
+# ---------------------------------------------------------------------------
+# Odds move — exact payload and edge cases
+# ---------------------------------------------------------------------------
+
+class TestCheckOddsMoveDetail:
+    def test_exact_payload_values(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_previous_price(ticker, 0.25)
+        market = dict(SAMPLE_MARKET)
+        market["last_price_dollars"] = "0.3500"
+        collector._check_odds_move(market)
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "odds_move"
+        )
+        payload = sig["payload"]
+        assert payload["previous_yes"] == pytest.approx(0.25)
+        assert payload["current_yes"] == pytest.approx(0.35)
+        assert payload["change_pct"] == pytest.approx(10.0)
+        assert payload["ticker"] == ticker
+        assert sig["priority"] == "MEDIUM"
+        assert sig["source"] == "kalshi"
+
+    def test_zero_current_price_skips_entirely(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_previous_price(ticker, 0.25)
+        market = dict(SAMPLE_MARKET)
+        market["last_price_dollars"] = "0.0"
+        collector._check_odds_move(market)
+        assert mock_db.get_recent_signals() == []
+        # Zero price also must not overwrite the stored previous price
+        assert collector.get_previous_price(ticker) == pytest.approx(0.25)
+
+    def test_negative_current_price_skips(self, collector, mock_db):
+        market = dict(SAMPLE_MARKET)
+        market["last_price_dollars"] = "-0.1"
+        collector._check_odds_move(market)
+        assert mock_db.get_recent_signals() == []
+
+    def test_previous_price_always_updated_after_check(self, collector):
+        ticker = SAMPLE_MARKET["ticker"]
+        market = dict(SAMPLE_MARKET)
+        market["last_price_dollars"] = "0.42"
+        collector._check_odds_move(market)
+        assert collector.get_previous_price(ticker) == pytest.approx(0.42)
+
+    def test_non_numeric_price_returns_without_updating_state(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_previous_price(ticker, 0.25)
+        market = dict(SAMPLE_MARKET)
+        market["last_price_dollars"] = "not-a-number"
+        collector._check_odds_move(market)
+        assert mock_db.get_recent_signals() == []
+        assert collector.get_previous_price(ticker) == pytest.approx(0.25)
+
+
+# ---------------------------------------------------------------------------
+# Volume spike dedup — untested branch: re-fire only if ratio doubled or
+# 6+ hours elapsed since the last spike alert for this ticker.
+# ---------------------------------------------------------------------------
+
+class TestVolumeSpikeDedup:
+    @staticmethod
+    def _spiking_market(volume_fp="3000.00", volume_24h_fp="500.00", days_old=30):
+        m = dict(SAMPLE_MARKET)
+        m["created_time"] = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
+        m["volume_fp"] = volume_fp
+        m["volume_24h_fp"] = volume_24h_fp
+        return m
+
+    def test_second_check_same_ratio_soon_after_suppressed(self, collector, mock_db):
+        market = self._spiking_market()
+        collector._check_volume_spike(market)
+        collector._check_volume_spike(market)  # immediately again, same ratio
+        signals = [
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        ]
+        assert len(signals) == 1
+
+    def test_doubled_ratio_refires_immediately(self, collector, mock_db):
+        market = self._spiking_market(volume_24h_fp="500.00")  # 5x
+        collector._check_volume_spike(market)
+        bigger = self._spiking_market(volume_24h_fp="1100.00")  # ~11x, >2x prior ratio
+        collector._check_volume_spike(bigger)
+        signals = [
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        ]
+        assert len(signals) == 2
+
+    def test_six_hours_elapsed_refires_even_without_doubling(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        market = self._spiking_market()
+        collector._check_volume_spike(market)
+        # Manually push the stored timestamp back 7 hours to simulate elapsed time
+        from sentinel.collectors.kalshi import STATE_KEY_VOLUME_SPIKE
+        key = STATE_KEY_VOLUME_SPIKE.format(ticker=ticker)
+        stored = collector.db.state.get(key)
+        ratio_str, _ = stored.split("|")
+        old_ts = time.time() - 7 * 3600
+        collector.db.state.set(key, f"{ratio_str}|{old_ts}")
+
+        collector._check_volume_spike(market)  # same ratio, but 7h later
+        signals = [
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        ]
+        assert len(signals) == 2
+
+    def test_corrupted_dedup_state_refires(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        from sentinel.collectors.kalshi import STATE_KEY_VOLUME_SPIKE
+        collector.db.state.set(STATE_KEY_VOLUME_SPIKE.format(ticker=ticker), "garbage")
+        market = self._spiking_market()
+        collector._check_volume_spike(market)
+        signals = [
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        ]
+        assert len(signals) == 1
+
+    def test_missing_created_time_skips(self, collector, mock_db):
+        market = self._spiking_market()
+        del market["created_time"]
+        collector._check_volume_spike(market)
+        assert mock_db.get_recent_signals() == []
+
+    def test_age_days_floors_at_1_for_same_day_market(self, collector, mock_db):
+        """A market created today (age_days would be 0) must use daily_avg =
+        volume_total / 1, not divide by zero."""
+        market = self._spiking_market(days_old=0, volume_fp="100.00", volume_24h_fp="500.00")
+        collector._check_volume_spike(market)  # must not raise ZeroDivisionError
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        assert sig["payload"]["daily_avg"] == pytest.approx(100.0)
+
+    def test_zero_volume_total_skips(self, collector, mock_db):
+        market = self._spiking_market(volume_fp="0")
+        collector._check_volume_spike(market)
+        assert mock_db.get_recent_signals() == []
+
+    def test_dedup_state_stores_ratio_and_timestamp(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        from sentinel.collectors.kalshi import STATE_KEY_VOLUME_SPIKE
+        market = self._spiking_market()
+        collector._check_volume_spike(market)
+        stored = collector.db.state.get(STATE_KEY_VOLUME_SPIKE.format(ticker=ticker))
+        ratio_str, ts_str = stored.split("|")
+        assert float(ratio_str) == pytest.approx(5.0)
+        assert float(ts_str) == pytest.approx(time.time(), abs=5)
+
+
+# ---------------------------------------------------------------------------
+# Fetch — exact request params and response-key handling
+# ---------------------------------------------------------------------------
+
+class TestFetchParams:
+    def test_fetch_markets_request_params(self, collector):
+        collector._client.get = MagicMock(
+            return_value=_mock_response(200, {"markets": []})
+        )
+        collector.fetch_event_markets("KXFOO")
+        _, kwargs = collector._client.get.call_args
+        assert kwargs["params"] == {"event_ticker": "KXFOO", "status": "open", "limit": 100}
+
+    def test_fetch_markets_missing_key_defaults_empty(self, collector):
+        collector._client.get = MagicMock(return_value=_mock_response(200, {}))
+        assert collector.fetch_event_markets("KXFOO") == []
+
+    def test_fetch_trades_request_params(self, collector):
+        collector._client.get = MagicMock(
+            return_value=_mock_response(200, {"trades": []})
+        )
+        collector.fetch_recent_trades("TICKER-1", limit=25)
+        _, kwargs = collector._client.get.call_args
+        assert kwargs["params"] == {"ticker": "TICKER-1", "limit": 25}
+
+    def test_fetch_trades_default_limit_50(self, collector):
+        collector._client.get = MagicMock(
+            return_value=_mock_response(200, {"trades": []})
+        )
+        collector.fetch_recent_trades("TICKER-1")
+        _, kwargs = collector._client.get.call_args
+        assert kwargs["params"]["limit"] == 50
+
+    def test_fetch_trades_missing_key_defaults_empty(self, collector):
+        collector._client.get = MagicMock(return_value=_mock_response(200, {}))
+        assert collector.fetch_recent_trades("TICKER-1") == []
+
+
+# ---------------------------------------------------------------------------
+# __init__ — wiring from config
+# ---------------------------------------------------------------------------
+
+class TestKalshiInit:
+    def test_poll_interval_from_config(self, collector, mock_config):
+        assert collector._poll_interval == mock_config.kalshi.poll_interval_seconds
+
+    def test_tracked_events_from_config(self, collector):
+        assert collector._tracked_events == ["KXMIDEASTWAR", "KXTRUMPTARIFF"]
+
+    def test_api_base_from_config(self, collector):
+        assert collector._api_base == KALSHI_API_BASE
+
+    def test_thresholds_from_config(self, collector, mock_config):
+        assert collector._thresholds is mock_config.kalshi.thresholds
+
+    def test_consecutive_errors_starts_zero(self, collector):
+        assert collector._consecutive_errors == 0
