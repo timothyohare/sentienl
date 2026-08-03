@@ -187,6 +187,15 @@ class KalshiCollector:
         market_title = market.get("title", ticker)
         last_trade_id = self.get_last_trade_id(ticker)
 
+        if last_trade_id is None:
+            # First poll for this ticker: seed the cursor to the newest trade
+            # without emitting signals for Kalshi's trade-history backlog —
+            # otherwise every historically-large trade in the initial
+            # limit=50 fetch fires as if it just happened.
+            if trades:
+                self.set_last_trade_id(ticker, trades[0].get("trade_id", ""))
+            return
+
         # Process only new trades (ID-based deduplication)
         new_trades = []
         for trade in trades:

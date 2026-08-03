@@ -246,6 +246,8 @@ class TestProcessMarket:
         collector.fetch_recent_trades = MagicMock(return_value=trades)
 
     def test_large_bet_creates_signal(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_last_trade_id(ticker, "seed-trade-0")  # baseline from a prior poll
         large_trade = dict(SAMPLE_TRADE)
         large_trade["count_fp"] = "200.00"  # > 100 threshold
         self._mock_trades(collector, [large_trade])
@@ -254,6 +256,8 @@ class TestProcessMarket:
         assert any(s["signal_type"] == "large_bet" and s["source"] == "kalshi" for s in signals)
 
     def test_no_signal_for_small_trade(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_last_trade_id(ticker, "seed-trade-0")
         small_trade = dict(SAMPLE_TRADE)
         small_trade["count_fp"] = "10.00"  # < 100 threshold
         self._mock_trades(collector, [small_trade])
@@ -308,6 +312,8 @@ class TestProcessMarket:
 
     def test_trade_deduplication(self, collector, mock_db):
         """Second poll with same trade ID should not create duplicate signals."""
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_last_trade_id(ticker, "seed-trade-0")  # simulate an established cursor
         large_trade = dict(SAMPLE_TRADE)
         large_trade["count_fp"] = "200.00"
 
@@ -324,6 +330,8 @@ class TestProcessMarket:
 
     def test_large_bet_signal_payload(self, collector, mock_db):
         """Verify the signal payload has the expected fields."""
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_last_trade_id(ticker, "seed-trade-0")
         large_trade = dict(SAMPLE_TRADE)
         large_trade["count_fp"] = "200.00"
         self._mock_trades(collector, [large_trade])
@@ -348,6 +356,56 @@ class TestProcessMarket:
         upper_market["status"] = "ACTIVE"
         collector.process_market(upper_market)
         assert mock_db.get_recent_signals() == []
+
+
+# ---------------------------------------------------------------------------
+# Cold-start regression: a ticker's first-ever poll must not flood on
+# Kalshi's trade-history backlog (fixed 2026-08-03 — see kalshi.py
+# _process_trades). Mirrors the guard _check_odds_move already had via
+# _is_odds_move(None, ...) -> False.
+# ---------------------------------------------------------------------------
+
+class TestColdStartTradeBacklog:
+    def _mock_trades(self, collector, trades):
+        collector.fetch_recent_trades = MagicMock(return_value=trades)
+
+    def test_first_poll_seeds_cursor_without_emitting(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        assert collector.get_last_trade_id(ticker) is None  # no state yet
+
+        # Kalshi returns trades newest-first; every one is above threshold,
+        # simulating a backlog of historically-large trades on first fetch.
+        backlog = [
+            dict(SAMPLE_TRADE, trade_id=f"backlog-{i}", count_fp="500.00")
+            for i in range(5)
+        ]
+        self._mock_trades(collector, backlog)
+
+        collector.process_market(SAMPLE_MARKET)
+
+        signals = mock_db.get_recent_signals()
+        assert len([s for s in signals if s["signal_type"] == "large_bet"]) == 0
+        assert collector.get_last_trade_id(ticker) == "backlog-0"
+
+    def test_first_poll_with_no_trades_does_not_error(self, collector, mock_db):
+        self._mock_trades(collector, [])
+        collector.process_market(SAMPLE_MARKET)  # must not raise
+        signals = mock_db.get_recent_signals()
+        assert len([s for s in signals if s["signal_type"] == "large_bet"]) == 0
+
+    def test_second_poll_after_cold_start_fires_on_genuinely_new_trade(self, collector, mock_db):
+        backlog = [dict(SAMPLE_TRADE, trade_id="backlog-0", count_fp="500.00")]
+        self._mock_trades(collector, backlog)
+        collector.process_market(SAMPLE_MARKET)  # cold start: seeds cursor, no signal
+
+        new_trade = dict(SAMPLE_TRADE, trade_id="new-trade-1", count_fp="500.00")
+        self._mock_trades(collector, [new_trade, backlog[0]])
+        collector.process_market(SAMPLE_MARKET)
+
+        signals = mock_db.get_recent_signals()
+        large_bets = [s for s in signals if s["signal_type"] == "large_bet"]
+        assert len(large_bets) == 1
+        assert large_bets[0]["payload"]["trade_id"] == "new-trade-1"
 
 
 # ---------------------------------------------------------------------------
