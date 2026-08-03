@@ -3,5 +3,5 @@ playwright==1.60.0
 pyyaml==6.0.1
 flask==3.0.3
 yfinance>=1.4.0
-requests==2.31.0
+requests==2.33.0
 alpaca-py==0.29.0
