@@ -324,3 +324,148 @@ class TestCorrelationQuery:
         )
         result = tmp_db.get_correlated_signals_in_window(minutes=10)
         assert len(result) > 0
+
+    def test_get_correlated_signals_default_minutes_is_10(self, tmp_db):
+        """anchor lookback is minutes*2; default minutes=10 means an anchor
+        19 minutes old is included but one 21 minutes old is not."""
+        from datetime import timedelta
+        now = datetime.now(UTC)
+        anchor_time = (now - timedelta(minutes=19)).isoformat()
+        tmp_db.execute(
+            _INSERT_SIGNAL_SQL,
+            ("truth_social", "new_post", "HIGH", "{}", "Anchor", 0, anchor_time),
+        )
+        tmp_db.execute(
+            _INSERT_SIGNAL_SQL,
+            ("futures_oil", "volume_spike", "HIGH", "{}", "Other", 0, anchor_time),
+        )
+        result = tmp_db.get_correlated_signals_in_window()
+        # Both signals qualify as their own anchor (self-join, GROUP BY s1.id)
+        assert len(result) == 2
+
+    def test_get_correlated_signals_anchor_older_than_2x_window_excluded(self, tmp_db):
+        from datetime import timedelta
+        now = datetime.now(UTC)
+        anchor_time = (now - timedelta(minutes=25)).isoformat()
+        tmp_db.execute(
+            _INSERT_SIGNAL_SQL,
+            ("truth_social", "new_post", "HIGH", "{}", "Anchor", 0, anchor_time),
+        )
+        tmp_db.execute(
+            _INSERT_SIGNAL_SQL,
+            ("futures_oil", "volume_spike", "HIGH", "{}", "Other", 0, anchor_time),
+        )
+        result = tmp_db.get_correlated_signals_in_window(minutes=10)
+        assert result == []
+
+
+class TestUtcNow:
+    def test_utcnow_is_timezone_aware_utc(self):
+        from sentinel.core.db import _utcnow
+        ts = _utcnow()
+        parsed = datetime.fromisoformat(ts)
+        assert parsed.tzinfo is not None
+        assert parsed.utcoffset().total_seconds() == 0
+
+
+class TestInsertSignalEncoding:
+    def test_non_ascii_payload_stored_unescaped(self, tmp_db):
+        """ensure_ascii=False: non-ASCII chars are stored as literal UTF-8,
+        not \\uXXXX escapes, in the raw JSON column."""
+        sid = tmp_db.insert_signal(
+            "truth_social", "new_post", "CRITICAL",
+            {"text": "héllo wörld"}, "unicode test",
+        )
+        rows = tmp_db.execute_fetchall("SELECT payload FROM signals WHERE id=?", (sid,))
+        raw_json = rows[0]["payload"]
+        assert "héllo wörld" in raw_json
+        assert "\\u" not in raw_json
+
+
+class TestGetConn:
+    def test_get_conn_before_init_raises(self, tmp_path):
+        db = Database(str(tmp_path / "x.db"))
+        with pytest.raises(RuntimeError, match="not initialised"):
+            db.execute("SELECT 1")
+
+
+class TestClose:
+    def test_close_makes_connection_unusable(self, tmp_path):
+        db = Database(str(tmp_path / "x.db"))
+        db.init()
+        db.close()
+        with pytest.raises(RuntimeError):
+            db.execute("SELECT 1")
+
+    def test_close_idempotent(self, tmp_path):
+        db = Database(str(tmp_path / "x.db"))
+        db.init()
+        db.close()
+        db.close()  # must not raise
+
+
+class TestDefaultLimits:
+    def test_get_unalerted_signals_default_limit_100(self, tmp_db):
+        for i in range(101):
+            tmp_db.insert_signal("truth_social", "new_post", "LOW", {}, f"P{i}")
+        assert len(tmp_db.get_unalerted_signals()) == 100
+
+    def test_get_recent_signals_default_limit_20(self, tmp_db):
+        for i in range(21):
+            tmp_db.insert_signal("truth_social", "new_post", "LOW", {}, f"P{i}")
+        assert len(tmp_db.get_recent_signals()) == 20
+
+    def test_get_signals_by_source_default_limit_100_not_20(self, tmp_db):
+        """get_signals_by_source must forward its own limit=100 default to
+        get_recent_signals — not silently fall back to that function's
+        limit=20 default."""
+        for i in range(30):
+            tmp_db.insert_signal("truth_social", "new_post", "LOW", {}, f"P{i}")
+        assert len(tmp_db.get_signals_by_source("truth_social")) == 30
+
+
+class TestRetentionCleanupBoundary:
+    def test_cutoff_truncated_to_midnight_not_current_time(self, tmp_db):
+        """The cutoff is `today at 00:00 UTC` minus `days`, not `now` minus
+        `days` — a signal from earlier today (before 'now' but after
+        midnight) must survive a days=1 cleanup."""
+        from unittest.mock import patch as mock_patch
+        fixed_now = datetime(2026, 6, 15, 15, 30, 0, tzinfo=UTC)
+        tmp_db.execute(
+            _INSERT_SIGNAL_SQL,
+            ("truth_social", "new_post", "LOW", "{}", "mid-cutoff-day",
+             0, "2026-06-14T10:00:00+00:00"),
+        )
+        tmp_db.execute(
+            _INSERT_SIGNAL_SQL,
+            ("truth_social", "new_post", "LOW", "{}", "before-cutoff",
+             0, "2026-06-13T23:59:00+00:00"),
+        )
+        tmp_db._conn.commit()
+        with mock_patch("sentinel.core.db.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed_now
+            mock_dt.now.side_effect = None
+            tmp_db.delete_signals_older_than_days(1)
+        rows = tmp_db.execute_fetchall("SELECT summary FROM signals")
+        summaries = {r["summary"] for r in rows}
+        assert "mid-cutoff-day" in summaries
+        assert "before-cutoff" not in summaries
+
+    def test_deleted_count_returned(self, tmp_db):
+        tmp_db.execute(
+            _INSERT_SIGNAL_SQL,
+            ("truth_social", "new_post", "LOW", "{}", "old", 0, "2020-01-01T00:00:00+00:00"),
+        )
+        tmp_db.execute(
+            _INSERT_SIGNAL_SQL,
+            ("truth_social", "new_post", "LOW", "{}", "old2", 0, "2020-01-01T00:00:00+00:00"),
+        )
+        tmp_db._conn.commit()
+        deleted = tmp_db.delete_signals_older_than_days(30)
+        assert deleted == 2
+
+
+class TestUpdatePriceInvalidColumn:
+    def test_invalid_column_error_names_column(self, tmp_db):
+        with pytest.raises(ValueError, match="price_bogus"):
+            tmp_db.price_tracking.update_price(1, "CL=F", "price_bogus", 1.0)

@@ -628,10 +628,8 @@ class TestDispatchSignal:
         # Pre-fill the rate limiter
         alerter._rate_limiter.record_sent("polymarket")
         signal = mock_db.get_unalerted_signals()[0]
-        alerter.dispatch_signal(signal)
-        # Should return False (suppressed) but still not crash
-        # The signal may remain unalerted (implementation may vary on suppressed behaviour)
-        # At minimum, we check ntfy was not called
+        result = alerter.dispatch_signal(signal)
+        assert result is False
         assert len(responses_lib.calls) == 0
 
     @responses_lib.activate
@@ -645,7 +643,8 @@ class TestDispatchSignal:
             from datetime import datetime as real_datetime
             mock_dt.now.return_value = real_datetime(2026, 3, 27, 18, 0, 0, tzinfo=UTC)
             mock_dt.now.side_effect = None
-            alerter.dispatch_signal(signal, now_utc=time(18, 0))
+            result = alerter.dispatch_signal(signal, now_utc=time(18, 0))
+        assert result is False
         assert len(responses_lib.calls) == 0
 
     def test_dispatch_calls_send_ntfy_with_formatted_title_body_priority_tags(self, alerter):
