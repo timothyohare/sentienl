@@ -12,9 +12,9 @@ The browser session is kept alive for the lifetime of the collector process.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from playwright.sync_api import sync_playwright, Playwright, Browser, BrowserContext, Page
+from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +35,11 @@ class TruthSocialClient:
     def __init__(self, username: str, password: str):
         self._username = username
         self._password = password
-        self._playwright: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
-        self._context: Optional[BrowserContext] = None
-        self._page: Optional[Page] = None
-        self._bearer_token: Optional[str] = None
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
+        self._bearer_token: str | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -124,7 +124,7 @@ class TruthSocialClient:
     # API access
     # ------------------------------------------------------------------
 
-    def api_get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    def api_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """
         Make a GET request to the Truth Social API using in-browser fetch().
 
@@ -179,7 +179,7 @@ class TruthSocialClient:
 
     def fetch_posts(
         self, account_id: str, limit: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch recent posts for the given account ID."""
         data = self.api_get(
             f"/api/v1/accounts/{account_id}/statuses",
@@ -189,7 +189,7 @@ class TruthSocialClient:
             return data
         return []
 
-    def resolve_account_id(self, handle: str) -> Optional[str]:
+    def resolve_account_id(self, handle: str) -> str | None:
         """Resolve a handle to an account ID via the lookup endpoint."""
         data = self.api_get(
             "/api/v1/accounts/lookup",

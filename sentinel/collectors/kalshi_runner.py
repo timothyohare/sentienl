@@ -11,9 +11,9 @@ logging.basicConfig(
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from sentinel.collectors.kalshi import KalshiCollector
 from sentinel.core.config import load_config
 from sentinel.core.db import Database
-from sentinel.collectors.kalshi import KalshiCollector
 
 
 def main():

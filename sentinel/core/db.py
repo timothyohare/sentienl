@@ -13,8 +13,8 @@ WAL mode and synchronous=NORMAL are set on every connection open.
 import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ _VALID_PRICE_COLUMNS = {"price_t0", "price_t15", "price_t60", "price_t240", "pri
 
 def _utcnow() -> str:
     """Return current UTC time as ISO8601 string."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class StateStore:
@@ -79,7 +79,7 @@ class StateStore:
     def __init__(self, conn_factory):
         self._conn = conn_factory
 
-    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get(self, key: str, default: str | None = None) -> str | None:
         """Return the value for key, or default if not found."""
         conn = self._conn()
         row = conn.execute(
@@ -110,7 +110,7 @@ class WalletCache:
     def __init__(self, conn_factory):
         self._conn = conn_factory
 
-    def get(self, address: str) -> Optional[Dict[str, Any]]:
+    def get(self, address: str) -> dict[str, Any] | None:
         """Return cached wallet record or None."""
         conn = self._conn()
         row = conn.execute(
@@ -119,7 +119,7 @@ class WalletCache:
         ).fetchone()
         return dict(row) if row else None
 
-    def set(self, address: str, first_tx_date: Optional[str]) -> None:
+    def set(self, address: str, first_tx_date: str | None) -> None:
         """Insert or update a wallet cache entry."""
         conn = self._conn()
         conn.execute(
@@ -142,7 +142,7 @@ class PostPriceTracking:
         signal_id: int,
         source: str,
         instrument: str,
-        price_t0: Optional[float] = None,
+        price_t0: float | None = None,
     ) -> None:
         """Create a new price tracking record for a signal."""
         conn = self._conn()
@@ -157,7 +157,9 @@ class PostPriceTracking:
     def update_price(self, signal_id: int, instrument: str, column: str, price: float) -> None:
         """Update a specific price column (price_t15, price_t60, etc.)."""
         if column not in _VALID_PRICE_COLUMNS:
-            raise ValueError(f"Invalid price column: {column!r}. Must be one of {_VALID_PRICE_COLUMNS}")
+            raise ValueError(
+                f"Invalid price column: {column!r}. Must be one of {_VALID_PRICE_COLUMNS}"
+            )
         conn = self._conn()
         conn.execute(
             f"UPDATE post_price_tracking SET {column}=? "
@@ -166,7 +168,7 @@ class PostPriceTracking:
         )
         conn.commit()
 
-    def get_pending_updates(self) -> List[Dict[str, Any]]:
+    def get_pending_updates(self) -> list[dict[str, Any]]:
         """Return rows where not all price columns are filled in yet."""
         conn = self._conn()
         rows = conn.execute(
@@ -191,7 +193,7 @@ class Database:
 
     def __init__(self, path: str):
         self._path = path
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         # Sub-accessors wired to this instance's connection
         self.state = StateStore(self._get_conn)
         self.wallet_cache = WalletCache(self._get_conn)
@@ -227,7 +229,7 @@ class Database:
         conn = self._get_conn()
         return conn.execute(sql, params)
 
-    def execute_fetchall(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
+    def execute_fetchall(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         """Execute a SELECT and return all rows as dicts."""
         conn = self._get_conn()
         rows = conn.execute(sql, params).fetchall()
@@ -248,10 +250,10 @@ class Database:
         source: str,
         signal_type: str,
         priority: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         summary: str,
         alerted: bool = False,
-        created_at: Optional[str] = None,
+        created_at: str | None = None,
     ) -> int:
         """
         Insert a new signal record. Returns the new row ID.
@@ -269,13 +271,15 @@ class Database:
         payload_json = json.dumps(payload, ensure_ascii=False)
         ts = created_at or _utcnow()
         cursor = conn.execute(
-            "INSERT INTO signals (source, signal_type, priority, payload, summary, alerted, created_at) "
+            "INSERT INTO signals "
+            "(source, signal_type, priority, payload, summary, alerted, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (source, signal_type, priority, payload_json, summary, int(alerted), ts),
         )
         conn.commit()
         logger.debug("Inserted signal id=%d source=%s type=%s priority=%s",
                      cursor.lastrowid, source, signal_type, priority)
+        assert cursor.lastrowid is not None  # guaranteed after a successful INSERT
         return cursor.lastrowid
 
     def mark_alerted(self, signal_id: int) -> None:
@@ -286,7 +290,7 @@ class Database:
 
     def get_unalerted_signals(
         self, limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return signals where alerted=0, ordered oldest-first."""
         rows = self.execute_fetchall(
             "SELECT * FROM signals WHERE alerted=0 ORDER BY created_at ASC LIMIT ?",
@@ -298,8 +302,8 @@ class Database:
         return rows
 
     def get_recent_signals(
-        self, limit: int = 20, source: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, limit: int = 20, source: str | None = None
+    ) -> list[dict[str, Any]]:
         """Return recent signals, newest first."""
         if source:
             rows = self.execute_fetchall(
@@ -317,13 +321,13 @@ class Database:
 
     def get_signals_by_source(
         self, source: str, limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return signals filtered by source, newest first."""
         return self.get_recent_signals(limit=limit, source=source)
 
     def get_signals_in_range(
-        self, start_utc: str, end_utc: str, min_priority: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, start_utc: str, end_utc: str, min_priority: str | None = None
+    ) -> list[dict[str, Any]]:
         """Return signals within a UTC time range, optionally filtered by priority."""
         priority_levels = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
         if min_priority:
@@ -351,7 +355,7 @@ class Database:
         """Delete signals older than `days` days. Returns number of rows deleted."""
         conn = self._get_conn()
         cutoff = (
-            datetime.now(timezone.utc)
+            datetime.now(UTC)
             .replace(hour=0, minute=0, second=0, microsecond=0)
         )
         from datetime import timedelta
@@ -365,7 +369,7 @@ class Database:
                     cursor.rowcount, days)
         return cursor.rowcount
 
-    def get_correlated_signals_in_window(self, minutes: int = 10) -> List[Dict[str, Any]]:
+    def get_correlated_signals_in_window(self, minutes: int = 10) -> list[dict[str, Any]]:
         """
         Find HIGH/CRITICAL signals from 2+ distinct sources correlated with a
         recent anchor event.
@@ -408,7 +412,7 @@ class Database:
         return [dict(r) for r in rows]
 
     def count_signals_since(
-        self, source: str, since_utc: str, signal_type: Optional[str] = None
+        self, source: str, since_utc: str, signal_type: str | None = None
     ) -> int:
         """Count signals from a source since a given UTC timestamp."""
         if signal_type:
@@ -423,4 +427,4 @@ class Database:
 
 
 # Convenience type aliases for external imports
-Signal = Dict[str, Any]
+Signal = dict[str, Any]

@@ -16,8 +16,8 @@ exposes check_and_signal() for testing.
 
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class CorrelationDetector:
         # Loaded from db.state so the cooldown survives a process restart —
         # otherwise a restart inside the lookback window re-fires the exact
         # duplicate correlations this cooldown exists to suppress.
-        self._last_fired_time: Optional[datetime] = self._parse_dt(
+        self._last_fired_time: datetime | None = self._parse_dt(
             self.db.state.get(CORRELATION_SIGNAL_DEDUP_KEY)
         )
 
@@ -59,7 +59,7 @@ class CorrelationDetector:
     # Core logic
     # ------------------------------------------------------------------
 
-    def _is_fireable(self, window: Dict[str, Any]) -> bool:
+    def _is_fireable(self, window: dict[str, Any]) -> bool:
         """
         Return True if this window should produce a correlation alert given
         current state. Encapsulates BOTH dedup rules so check_correlation() and
@@ -70,14 +70,12 @@ class CorrelationDetector:
         if window.get("anchor_id") in self._fired_on_anchors:
             return False
         anchor_dt = self._parse_dt(window.get("anchor_time", ""))
-        if (
+        return not (
             anchor_dt is not None
             and self._last_fired_time is not None
             and abs((anchor_dt - self._last_fired_time).total_seconds())
             <= self.window_minutes * 60
-        ):
-            return False
-        return True
+        )
 
     def check_correlation(self) -> bool:
         """
@@ -142,7 +140,7 @@ class CorrelationDetector:
                 )
 
     @staticmethod
-    def _parse_dt(value: str) -> Optional[datetime]:
+    def _parse_dt(value: str) -> datetime | None:
         """Parse an ISO-8601 timestamp into a timezone-aware datetime, or None."""
         if not value:
             return None
@@ -151,7 +149,7 @@ class CorrelationDetector:
         except (ValueError, TypeError):
             return None
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
 
     # ------------------------------------------------------------------

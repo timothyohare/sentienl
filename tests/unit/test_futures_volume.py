@@ -1,7 +1,7 @@
 """Unit tests for collectors/futures_volume.py."""
 
-from datetime import date, time
-from unittest.mock import MagicMock, patch, PropertyMock
+from datetime import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,7 +12,6 @@ from sentinel.collectors.futures_volume import (
     _is_roll_date,
 )
 from sentinel.core.db import Database
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

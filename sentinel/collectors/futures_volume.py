@@ -20,8 +20,8 @@ to avoid false positives from front-month/second-month volume rotation.
 import logging
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ SOURCE_MAP = {
 # Pure helper functions
 # ---------------------------------------------------------------------------
 
-def _canonical_ts(ts: Any) -> Optional[str]:
+def _canonical_ts(ts: Any) -> str | None:
     """
     Normalise a bar timestamp to a canonical UTC ISO-8601 string for dedup.
 
@@ -61,11 +61,11 @@ def _canonical_ts(ts: Any) -> Optional[str]:
     except (ValueError, TypeError):
         return str(ts)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).isoformat()
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat()
 
 
-def _compute_rolling_average(volumes: List[Optional[float]], bars: int) -> float:
+def _compute_rolling_average(volumes: list[float | None], bars: int) -> float:
     """
     Return the mean of the last `bars` non-None volumes.
     Returns 0.0 if the list is empty or contains only None values.
@@ -79,11 +79,11 @@ def _compute_rolling_average(volumes: List[Optional[float]], bars: int) -> float
 
 
 def _detect_volume_spike(
-    current_volume: Optional[float],
+    current_volume: float | None,
     rolling_avg: float,
     spike_multiplier: float,
     min_absolute_volume: float,
-) -> Optional[Dict[str, float]]:
+) -> dict[str, float] | None:
     """
     Return a dict with spike info if the current volume is anomalous.
 
@@ -111,10 +111,7 @@ def _is_roll_date(ticker: str, date_str: str, roll_dates: list) -> bool:
     """
     Return True if `date_str` (YYYY-MM-DD) is a configured roll date for `ticker`.
     """
-    for rd in roll_dates:
-        if rd.date == date_str and ticker in rd.tickers:
-            return True
-    return False
+    return any(rd.date == date_str and ticker in rd.tickers for rd in roll_dates)
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +141,7 @@ class FuturesVolumeCollector:
         self._alpaca_api_secret = fut_cfg.alpaca_api_secret
         self._alpaca_base_url = fut_cfg.alpaca_base_url
         # In-memory volume history keyed by ticker
-        self._volume_history: Dict[str, List[Optional[float]]] = defaultdict(list)
+        self._volume_history: dict[str, list[float | None]] = defaultdict(list)
 
     # ------------------------------------------------------------------
     # Window helpers
@@ -165,7 +162,7 @@ class FuturesVolumeCollector:
     # Volume history
     # ------------------------------------------------------------------
 
-    def add_volume_observation(self, ticker: str, volume: Optional[float]) -> None:
+    def add_volume_observation(self, ticker: str, volume: float | None) -> None:
         """Add a volume observation to the rolling history for a ticker."""
         history = self._volume_history[ticker]
         history.append(volume)
@@ -177,7 +174,7 @@ class FuturesVolumeCollector:
     # Data fetching
     # ------------------------------------------------------------------
 
-    def _fetch_alpaca(self, ticker: str) -> List[Dict[str, Any]]:
+    def _fetch_alpaca(self, ticker: str) -> list[dict[str, Any]]:
         """
         Fetch 1-minute bars from Alpaca Markets.
         Returns a list of bar dicts with keys: volume, close, open.
@@ -217,7 +214,7 @@ class FuturesVolumeCollector:
             logger.warning("Alpaca fetch failed for %s: %s", ticker, exc)
         return []
 
-    def _fetch_yfinance(self, ticker: str) -> List[Dict[str, Any]]:
+    def _fetch_yfinance(self, ticker: str) -> list[dict[str, Any]]:
         """
         Fetch 1-minute bars from Yahoo Finance via yfinance.
         Note: may have 10–20 min delay for futures data.
@@ -245,7 +242,7 @@ class FuturesVolumeCollector:
             logger.error("yfinance fetch failed for %s: %s", ticker, exc)
             return []
 
-    def fetch_bars(self, ticker: str) -> List[Dict[str, Any]]:
+    def fetch_bars(self, ticker: str) -> list[dict[str, Any]]:
         """
         Fetch 1-minute bars for a ticker. Tries Alpaca first, falls back to yfinance.
         """
@@ -263,7 +260,7 @@ class FuturesVolumeCollector:
     def process_instrument(
         self,
         instrument,
-        latest_bar: Dict[str, Any],
+        latest_bar: dict[str, Any],
         now_time,
         today_str: str,
     ) -> None:
@@ -368,7 +365,7 @@ class FuturesVolumeCollector:
 
         while True:
             try:
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 now_time = now.time()
                 today_str = now.strftime("%Y-%m-%d")
 

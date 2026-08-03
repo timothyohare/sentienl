@@ -20,12 +20,12 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from sentinel.core.db import Database
 from sentinel.core.config import load_config
+from sentinel.core.db import Database
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +45,7 @@ STALE_THRESHOLD_MINUTES = 30  # collector considered stale if no signals in 30 m
 
 def check_health(db: Database, stale_threshold_minutes: int) -> dict:
     """Return health status for each monitored source."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = (now - timedelta(minutes=stale_threshold_minutes)).isoformat()
     results = {}
 
@@ -113,7 +113,9 @@ def main():
     if args.heartbeat and os.path.exists(args.config):
         try:
             config = load_config(args.config)
-            lines = [f"{source}: {'OK' if r['healthy'] else 'STALE'}" for source, r in results.items()]
+            lines = [
+                f"{source}: {'OK' if r['healthy'] else 'STALE'}" for source, r in results.items()
+            ]
             message = "Sentinel alive\n" + "\n".join(lines)
             send_heartbeat(config, message)
         except Exception as exc:

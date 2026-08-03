@@ -11,10 +11,10 @@ logging.basicConfig(
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from sentinel.core.config import load_config
-from sentinel.core.db import Database
 from sentinel.collectors.truth_social import TruthSocialCollector
 from sentinel.collectors.truth_social_client import TruthSocialClient
+from sentinel.core.config import load_config
+from sentinel.core.db import Database
 
 
 def _load_env(path: str) -> dict:

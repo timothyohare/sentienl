@@ -2,7 +2,6 @@
 
 import textwrap
 from datetime import time
-from pathlib import Path
 
 import pytest
 import yaml
@@ -13,7 +12,6 @@ from sentinel.core.config import (
     is_in_window,
     load_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -306,6 +304,17 @@ class TestAlertsConfig:
 
     def test_digest_time_utc(self, valid_config):
         assert valid_config.alerts.digest_time_utc == time(21, 0)
+
+    def test_enabled_defaults_true(self, valid_config):
+        assert valid_config.alerts.enabled is True
+
+    def test_enabled_false_parsed(self, tmp_path):
+        cfg_data = yaml.safe_load(VALID_CONFIG_YAML)
+        cfg_data["alerts"]["enabled"] = False
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(yaml.dump(cfg_data))
+        cfg = load_config(str(cfg_path))
+        assert cfg.alerts.enabled is False
 
     def test_missing_ntfy_topic_raises(self, tmp_path):
         cfg_data = yaml.safe_load(VALID_CONFIG_YAML)

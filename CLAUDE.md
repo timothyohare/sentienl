@@ -10,7 +10,11 @@ Let's keep to under 200 lines.
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium            # required for Truth Social collector
-pip install -r requirements-dev.txt   # adds pytest, coverage
+pip install -r requirements-dev.txt   # adds pytest, coverage, ruff, mypy, mutmut
+
+# Quality gates (see ~/.claude/CLAUDE.md for the harness contract this binds to)
+node ~/dev/newdev/code-build-harness/harness/gates/ci.mjs --force  # lint + typecheck + tests
+python sentinel/scripts/mutation_gate.py                           # mutation score (mutmut)
 
 # Database
 python sentinel/scripts/init_db.py                          # create/validate sentinel.db
@@ -50,7 +54,7 @@ Collectors ──insert_signal()──► signals table ──poll(alerted=0)─
 ```
 
 1. **Collectors** (`sentinel/collectors/`) run as independent loops. Each calls `db.insert_signal()` directly and tracks its own cursor state in `db.state` (key-value table). The Truth Social collector uses a Playwright headless browser (`truth_social_client.py`) to bypass Cloudflare — see section below.
-2. **Alerter** (`sentinel/dispatcher/alerter.py`) polls `signals WHERE alerted=0` every 2 seconds, applies quiet-hours / rate-limit logic, sends ntfy HTTP requests, then calls `db.mark_alerted(id)`. `CRITICAL` signals bypass both rate limiting and quiet hours — including Truth Social posts that classify as `CRITICAL` (see Signal priorities).
+2. **Alerter** (`sentinel/dispatcher/alerter.py`) polls `signals WHERE alerted=0` every 2 seconds, applies quiet-hours / rate-limit logic, sends ntfy HTTP requests, then calls `db.mark_alerted(id)`. `CRITICAL` signals bypass both rate limiting and quiet hours — including Truth Social posts that classify as `CRITICAL` (see Signal priorities). `alerts.enabled` in config.yaml (default `true`) gates the actual ntfy send: when `false`, `send_ntfy()` no-ops (still marks signals alerted, so bookkeeping stays consistent) — this is the **data-collection-only mode** used for backtesting, since collectors and the correlation detector keep writing to the DB regardless of this flag.
 3. **Correlation detector** (`sentinel/collectors/correlation_detector.py`) runs a SQL self-join query every 5 minutes looking for HIGH/CRITICAL events from 2+ distinct sources within any 10-minute window. If found, it inserts a CRITICAL `correlated_signal` — which the alerter then dispatches normally.
 4. **Dashboard** (`sentinel/dashboard/app.py`) is a read-only Flask app that queries the signals table directly.
 
@@ -105,7 +109,9 @@ Config is loaded once at startup and not reloaded. To apply config changes, rest
 
 Unit tests in `tests/unit/` use inline YAML fixtures rather than fixture files. See `test_config.py` for the `VALID_CONFIG_YAML` pattern used across test files. Tests do not hit real APIs or the filesystem (except for tempfile-based DB tests). The Truth Social tests mock the client at the protocol boundary (no Playwright needed to run tests).
 
-**Known pre-existing test failures** (not related to recent changes): `test_db.py` (1), `test_futures_volume.py` (2), `test_polymarket.py` (5) — 8 total. The `test_polymarket` failures are not hermetic: several try to reach the live API (DNS/network errors) since Polymarket is DNS-blocked here. All truth social, config, alerter, correlation detector, and dashboard tests pass.
+Full suite is green (`pytest`): 306 passed, 10 skipped. The skipped tests are non-hermetic `test_polymarket.py` cases that would otherwise try to reach the live API (DNS-blocked here since Polymarket is ACMA-blocked in Australia).
+
+**Harness wiring** (`.claude/harness.json`, added 2026-08-03): lint/typecheck/test/mutation are bound to the code-build-harness gates; `gate-ci --force` is green (lint + typecheck + test all pass). Lint fix history: `ruff --fix` handled 259 of an original 326 mechanically (import sorting/unused imports/`Optional[X]`→`X | None`/`timezone.utc`→`UTC`); the remaining 67 (mostly E402 in `*_runner.py` entrypoints where `sys.path.insert` must precede the import it enables, E501 in `dashboard/app.py`'s embedded HTML/CSS template, and a few genuine F841/SIM/B904 cases) were fixed by hand — see git history same day for the diffs. The two real mypy gaps (`polymarket.py`/`kalshi.py` odds-move arithmetic) were narrow type gaps, not bugs: `_is_odds_move()` already returns `False` when `previous is None`, so an `assert previous is not None` right after that guard documents the invariant mypy can't infer across the function-call boundary. **Gotcha hit and fixed**: `ruff check .` initially also swept mutmut's `mutants/` working-copy directory (not gitignored, not in ruff's default excludes) — inflated the count to 13k+ and autofixed files inside it mid-run. Fixed via `extend-exclude = ["mutants"]` in `pyproject.toml` and `mutants/` in `.gitignore`; if `mutants/` is ever renamed/moved, check both still match. `sentinel/scripts/mutation_gate.py` first-baseline score is 27.5% (killed=1433, survived=1856, no_tests=1919, total=5208) with `MIN_SCORE` deliberately left at 0.0 pending a real look at what's uncovered — never lower a threshold once set, to pass.
 
 ## PDF Processing
 When extracting data from PDFs to CSV, read and process PDFs one at a time to minimize token usage. Save intermediate results after each PDF so progress isn't lost if the session is interrupted. Always confirm the output CSV format with the user before processing multiple files.

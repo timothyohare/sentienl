@@ -1,20 +1,18 @@
 """Unit tests for collectors/truth_social.py."""
 
 import json
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 
 import pytest
 
 from sentinel.collectors.truth_social import (
-    TruthSocialCollector,
     ACCOUNT_ID_FALLBACK,
-    BASE_URL,
-    _extract_text,
+    TruthSocialCollector,
     _build_summary,
+    _extract_text,
+    classify_priority,
 )
 from sentinel.core.db import Database
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -128,7 +126,8 @@ class TestBuildSummary:
 
     def test_summary_includes_source(self):
         summary = _build_summary(FAKE_POST_1, text="Hello")
-        assert "truth" in summary.lower() or "trump" in summary.lower() or "new post" in summary.lower()
+        lowered = summary.lower()
+        assert "truth" in lowered or "trump" in lowered or "new post" in lowered
 
     def test_truncated_summary(self):
         long_text = "W" * 300
@@ -372,8 +371,6 @@ class TestKeywordFilter:
 # ---------------------------------------------------------------------------
 # Priority classification
 # ---------------------------------------------------------------------------
-
-from sentinel.collectors.truth_social import classify_priority
 
 CRIT_KW = ["tariff", "china", "war", "fed"]
 ENDORSE = ["endorse", "endorsement"]

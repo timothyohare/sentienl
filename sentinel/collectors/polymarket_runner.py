@@ -11,9 +11,9 @@ logging.basicConfig(
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from sentinel.collectors.polymarket import PolymarketCollector
 from sentinel.core.config import load_config
 from sentinel.core.db import Database
-from sentinel.collectors.polymarket import PolymarketCollector
 
 
 def main():

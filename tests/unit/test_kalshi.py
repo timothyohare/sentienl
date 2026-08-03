@@ -4,21 +4,19 @@ Unit tests for collectors/kalshi.py.
 All tests use unittest.mock to patch the httpx client directly.
 """
 
-import json
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
 from sentinel.collectors.kalshi import (
-    KalshiCollector,
     KALSHI_API_BASE,
+    KalshiCollector,
     _calculate_volume_spike,
     _is_large_bet,
     _is_odds_move,
 )
 from sentinel.core.db import Database
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -62,7 +60,7 @@ SAMPLE_MARKET = {
     "volume_fp": "5000.00",
     "volume_24h_fp": "800.00",
     "open_interest_fp": "1200.00",
-    "created_time": (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
+    "created_time": (datetime.now(UTC) - timedelta(days=30)).isoformat(),
 }
 
 SAMPLE_TRADE = {
@@ -297,7 +295,7 @@ class TestProcessMarket:
 
     def test_volume_spike_creates_signal(self, collector, mock_db):
         spiked = dict(SAMPLE_MARKET)
-        created_30d_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        created_30d_ago = (datetime.now(UTC) - timedelta(days=30)).isoformat()
         spiked["created_time"] = created_30d_ago
         spiked["volume_fp"] = "3000.00"  # lifetime = 3000, daily avg = 100
         spiked["volume_24h_fp"] = "500.00"  # 5x daily avg

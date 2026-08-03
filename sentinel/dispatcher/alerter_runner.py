@@ -12,10 +12,10 @@ logging.basicConfig(
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from sentinel.collectors.correlation_detector import CorrelationDetector
 from sentinel.core.config import load_config
 from sentinel.core.db import Database
 from sentinel.dispatcher.alerter import Alerter
-from sentinel.collectors.correlation_detector import CorrelationDetector
 
 
 def main():
@@ -27,7 +27,9 @@ def main():
 
     # Run correlation detector in a background thread
     detector = CorrelationDetector(config=config, db=db)
-    detector_thread = threading.Thread(target=detector.run, daemon=True, name="correlation-detector")
+    detector_thread = threading.Thread(
+        target=detector.run, daemon=True, name="correlation-detector"
+    )
     detector_thread.start()
 
     alerter = Alerter(config=config, db=db)

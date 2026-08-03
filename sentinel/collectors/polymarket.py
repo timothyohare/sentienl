@@ -21,8 +21,8 @@ and potential use from unblocked infrastructure only.
 import json
 import logging
 import time
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -51,7 +51,7 @@ def _is_large_bet(amount_usd: float, threshold: float) -> bool:
 
 
 def _is_new_wallet(
-    age_days: Optional[int],
+    age_days: int | None,
     min_age: int,
     min_bet: float,
     bet_usd: float,
@@ -63,7 +63,7 @@ def _is_new_wallet(
 
 
 def _is_odds_move(
-    previous: Optional[float],
+    previous: float | None,
     current: float,
     threshold_pct: float,
 ) -> bool:
@@ -81,7 +81,7 @@ def _calculate_volume_spike(
     baseline_volume: float,
     multiplier: float,
     min_absolute: float,
-) -> Optional[Dict[str, float]]:
+) -> dict[str, float] | None:
     """
     Return spike info dict if current_volume exceeds baseline by multiplier
     and meets the absolute minimum threshold. Returns None if no spike.
@@ -124,7 +124,7 @@ class PolymarketCollector:
     # Market fetching
     # ------------------------------------------------------------------
 
-    def fetch_market(self, slug: str) -> Optional[Dict[str, Any]]:
+    def fetch_market(self, slug: str) -> dict[str, Any] | None:
         """
         Fetch market data for a given slug. Returns None on any error.
         """
@@ -143,7 +143,7 @@ class PolymarketCollector:
             logger.error("Failed to fetch market %r: %s", slug, exc)
         return None
 
-    def is_market_resolved(self, market: Dict[str, Any]) -> bool:
+    def is_market_resolved(self, market: dict[str, Any]) -> bool:
         """Return True if the market is closed/resolved."""
         return market.get("closed", False) or not market.get("active", True)
 
@@ -153,7 +153,7 @@ class PolymarketCollector:
 
     def fetch_recent_trades(
         self, condition_id: str, limit: int = 50
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch recent trades for a market condition ID. Returns empty list on error.
         """
@@ -174,7 +174,7 @@ class PolymarketCollector:
     # Wallet age lookup
     # ------------------------------------------------------------------
 
-    def get_wallet_age_days(self, address: str) -> Optional[int]:
+    def get_wallet_age_days(self, address: str) -> int | None:
         """
         Return the age of a wallet in days (from first transaction), or None
         if unknown. Checks local cache first to avoid repeat API calls.
@@ -186,7 +186,7 @@ class PolymarketCollector:
                 return None
             try:
                 first_dt = datetime.fromisoformat(first_tx.replace("Z", "+00:00"))
-                age = (datetime.now(timezone.utc) - first_dt).days
+                age = (datetime.now(UTC) - first_dt).days
                 return age
             except (ValueError, TypeError):
                 return None
@@ -216,10 +216,10 @@ class PolymarketCollector:
                 if data.get("status") == "1" and data.get("result"):
                     first_tx = data["result"][0]
                     ts = int(first_tx["timeStamp"])
-                    first_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                    first_dt = datetime.fromtimestamp(ts, tz=UTC)
                     first_tx_iso = first_dt.isoformat()
                     self.db.wallet_cache.set(address, first_tx_iso)
-                    age = (datetime.now(timezone.utc) - first_dt).days
+                    age = (datetime.now(UTC) - first_dt).days
                     logger.debug("Wallet %s first tx: %s (%d days ago)", address, first_tx_iso, age)
                     return age
                 else:
@@ -233,7 +233,7 @@ class PolymarketCollector:
     # State tracking
     # ------------------------------------------------------------------
 
-    def get_last_trade_id(self, slug: str) -> Optional[str]:
+    def get_last_trade_id(self, slug: str) -> str | None:
         key = STATE_KEY_LAST_TRADE_ID.format(slug=slug)
         return self.db.state.get(key)
 
@@ -241,7 +241,7 @@ class PolymarketCollector:
         key = STATE_KEY_LAST_TRADE_ID.format(slug=slug)
         self.db.state.set(key, trade_id)
 
-    def get_previous_odds(self, slug: str) -> Optional[float]:
+    def get_previous_odds(self, slug: str) -> float | None:
         key = STATE_KEY_PREV_ODDS.format(slug=slug)
         val = self.db.state.get(key)
         if val is None:
@@ -261,8 +261,8 @@ class PolymarketCollector:
 
     def _process_trades(
         self,
-        market: Dict[str, Any],
-        trades: List[Dict[str, Any]],
+        market: dict[str, Any],
+        trades: list[dict[str, Any]],
     ) -> None:
         """Analyse trades and write signals to DB as appropriate."""
         slug = market.get("slug", "unknown")
@@ -327,7 +327,9 @@ class PolymarketCollector:
                     self._thresholds.new_wallet_min_bet_usd,
                     usdc_size,
                 ):
-                    logger.info("New wallet bet detected: %s (age=%s days)", wallet_address, age_days)
+                    logger.info(
+                        "New wallet bet detected: %s (age=%s days)", wallet_address, age_days
+                    )
                     self.db.insert_signal(
                         source="polymarket",
                         signal_type="new_wallet",
@@ -350,7 +352,7 @@ class PolymarketCollector:
 
             self.set_last_trade_id(slug, trade_id)
 
-    def _check_odds_move(self, market: Dict[str, Any]) -> None:
+    def _check_odds_move(self, market: dict[str, Any]) -> None:
         """Check if YES odds have moved significantly since last poll."""
         slug = market.get("slug", "unknown")
         market_name = market.get("question", slug)
@@ -366,6 +368,7 @@ class PolymarketCollector:
 
         previous_yes = self.get_previous_odds(slug)
         if _is_odds_move(previous_yes, current_yes, self._thresholds.odds_move_pct_5min):
+            assert previous_yes is not None  # _is_odds_move returns False when previous_yes is None
             change_pct = (current_yes - previous_yes) * 100
             logger.info("Odds move detected on %s: %.1f%% → %.1f%%",
                         slug, previous_yes * 100, current_yes * 100)
@@ -388,27 +391,16 @@ class PolymarketCollector:
             )
         self.set_previous_odds(slug, current_yes)
 
-    def _check_volume_spike(self, market: Dict[str, Any]) -> None:
-        """Check for unusual volume vs. 24hr baseline."""
-        slug = market.get("slug", "unknown")
-        market_name = market.get("question", slug)
-        market_url = market.get("url", f"https://polymarket.com/event/{slug}")
+    def _check_volume_spike(self, market: dict[str, Any]) -> None:
+        """Check for unusual volume vs. 24hr baseline.
 
-        try:
-            volume24hr = float(market.get("volume24hr", 0))
-        except (ValueError, TypeError):
-            return
+        Not implemented: volume24hr is cumulative, not a rolling window, so a
+        genuine 10-min spike ratio isn't computable from a single snapshot —
+        would need trade-volume tracking over time windows. Never called from
+        process_market; a no-op stub until that tracking exists.
+        """
 
-        # Estimate 10-min baseline from 24hr volume (144 ten-minute windows per day)
-        baseline_10min = volume24hr / 144
-
-        # volume field is cumulative — we can't directly get 10-min current
-        # Use volume24hr as the baseline comparison point instead
-        # This is a simplified approach; a production system would track rolling windows
-        # For now, compare recent trade volume to baseline
-        # (detailed implementation would require tracking trade volume over time windows)
-
-    def process_market(self, market: Dict[str, Any]) -> None:
+    def process_market(self, market: dict[str, Any]) -> None:
         """Process a single market: check trades, odds, and volume."""
         if self.is_market_resolved(market):
             logger.info("Market %r is resolved — skipping", market.get("slug", "?"))

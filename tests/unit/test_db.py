@@ -1,15 +1,18 @@
 """Unit tests for core/db.py — SQLite access layer."""
 
 import json
-import sqlite3
-import tempfile
 import os
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
 
-from sentinel.core.db import Database, Signal, StateStore, WalletCache, PostPriceTracking
+from sentinel.core.db import Database
+
+_INSERT_SIGNAL_SQL = (
+    "INSERT INTO signals "
+    "(source, signal_type, priority, payload, summary, alerted, created_at) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?)"
+)
 
 
 @pytest.fixture
@@ -275,16 +278,14 @@ class TestRetentionCleanup:
     def test_delete_old_signals(self, tmp_db):
         # Insert a signal with old created_at
         tmp_db.execute(
-            "INSERT INTO signals (source, signal_type, priority, payload, summary, alerted, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INSERT_SIGNAL_SQL,
             ("truth_social", "new_post", "CRITICAL", "{}", "Old post", 1,
              "2020-01-01T00:00:00+00:00"),
         )
         tmp_db.execute(
-            "INSERT INTO signals (source, signal_type, priority, payload, summary, alerted, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INSERT_SIGNAL_SQL,
             ("truth_social", "new_post", "CRITICAL", "{}", "New post", 0,
-             datetime.now(timezone.utc).isoformat()),
+             datetime.now(UTC).isoformat()),
         )
         tmp_db.delete_signals_older_than_days(30)
         rows = tmp_db.execute_fetchall("SELECT summary FROM signals")
@@ -299,30 +300,26 @@ class TestCorrelationQuery:
         assert result == []
 
     def test_get_correlated_signals_single_source_not_correlated(self, tmp_db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         tmp_db.execute(
-            "INSERT INTO signals (source, signal_type, priority, payload, summary, alerted, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INSERT_SIGNAL_SQL,
             ("truth_social", "new_post", "HIGH", "{}", "Post 1", 0, now),
         )
         tmp_db.execute(
-            "INSERT INTO signals (source, signal_type, priority, payload, summary, alerted, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INSERT_SIGNAL_SQL,
             ("truth_social", "new_post", "HIGH", "{}", "Post 2", 0, now),
         )
         result = tmp_db.get_correlated_signals_in_window(minutes=10)
         assert result == []
 
     def test_get_correlated_signals_multi_source_detected(self, tmp_db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         tmp_db.execute(
-            "INSERT INTO signals (source, signal_type, priority, payload, summary, alerted, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INSERT_SIGNAL_SQL,
             ("truth_social", "new_post", "HIGH", "{}", "Post", 0, now),
         )
         tmp_db.execute(
-            "INSERT INTO signals (source, signal_type, priority, payload, summary, alerted, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INSERT_SIGNAL_SQL,
             ("futures_oil", "volume_spike", "HIGH", "{}", "Spike", 0, now),
         )
         result = tmp_db.get_correlated_signals_in_window(minutes=10)

@@ -1,0 +1,7 @@
+{
+  "lint": "venv/bin/ruff check .",
+  "typecheck": "venv/bin/mypy sentinel",
+  "test": "venv/bin/pytest",
+  "acceptance": "venv/bin/pytest",
+  "mutation": "venv/bin/python sentinel/scripts/mutation_gate.py"
+}

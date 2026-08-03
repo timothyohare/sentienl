@@ -16,10 +16,10 @@ Access: http://localhost:5000 — LAN only, no authentication in v1.
 import json
 import logging
 import os
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from flask import Flask, jsonify, render_template, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +40,14 @@ def _to_aest(utc_str: str) -> str:
     try:
         dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         aest_dt = dt + AEST_OFFSET
         return aest_dt.strftime("%d %b %Y %H:%M:%S AEST")
     except (ValueError, AttributeError):
         return utc_str
 
 
-def _enrich_signal(signal: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_signal(signal: dict[str, Any]) -> dict[str, Any]:
     """Add derived fields for template rendering."""
     signal = dict(signal)
     signal["created_at_aest"] = _to_aest(signal.get("created_at", ""))
@@ -330,7 +330,7 @@ HEALTH_TEMPLATE = BASE_TEMPLATE.replace(
 # App factory
 # ---------------------------------------------------------------------------
 
-def create_app(db, config_path: Optional[str] = None) -> Flask:
+def create_app(db, config_path: str | None = None) -> Flask:
     """
     Create and configure the Flask application.
 
@@ -353,7 +353,7 @@ def create_app(db, config_path: Optional[str] = None) -> Flask:
     @app.route("/")
     def home():
         signals = [_enrich_signal(s) for s in db.get_recent_signals(limit=20)]
-        now_aest = _to_aest(datetime.now(timezone.utc).isoformat())
+        now_aest = _to_aest(datetime.now(UTC).isoformat())
         return render_template_string(
             HOME_TEMPLATE,
             signals=signals,
@@ -397,7 +397,7 @@ def create_app(db, config_path: Optional[str] = None) -> Flask:
             "correlation_detector",
         ]
         collectors_info = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         total_signals = db.execute_scalar("SELECT COUNT(*) FROM signals") or 0
         unalerted = db.execute_scalar("SELECT COUNT(*) FROM signals WHERE alerted=0") or 0
 
@@ -411,7 +411,7 @@ def create_app(db, config_path: Optional[str] = None) -> Flask:
                 try:
                     last_dt = datetime.fromisoformat(last_ts_str.replace("Z", "+00:00"))
                     if last_dt.tzinfo is None:
-                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                        last_dt = last_dt.replace(tzinfo=UTC)
                     minutes_ago = (now - last_dt).total_seconds() / 60
                     status = "ok" if minutes_ago < 5 else ("warn" if minutes_ago < 30 else "err")
                     last_signal = _to_aest(last_ts_str)
@@ -494,11 +494,11 @@ def create_app(db, config_path: Optional[str] = None) -> Flask:
 
 def main():
     """Run the dashboard as a standalone Flask dev server."""
-    import sys
     import os
+    import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from sentinel.core.db import Database
     from sentinel.core.config import load_config
+    from sentinel.core.db import Database
 
     config_path = os.environ.get("SENTINEL_CONFIG", "config.yaml")
     db_path = os.environ.get("SENTINEL_DB", "sentinel.db")

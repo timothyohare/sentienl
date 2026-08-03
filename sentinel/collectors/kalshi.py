@@ -18,8 +18,8 @@ authentication. Only order placement and portfolio queries require API keys.
 
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -48,7 +48,7 @@ def _is_large_bet(count_fp: float, threshold: float) -> bool:
 
 
 def _is_odds_move(
-    previous: Optional[float],
+    previous: float | None,
     current: float,
     threshold_pct: float,
 ) -> bool:
@@ -65,7 +65,7 @@ def _calculate_volume_spike(
     baseline_volume: float,
     multiplier: float,
     min_absolute: float,
-) -> Optional[Dict[str, float]]:
+) -> dict[str, float] | None:
     """
     Return spike info dict if current_volume exceeds baseline by multiplier
     and meets the absolute minimum threshold. Returns None if no spike.
@@ -107,7 +107,7 @@ class KalshiCollector:
     # API fetching
     # ------------------------------------------------------------------
 
-    def fetch_event_markets(self, event_ticker: str) -> List[Dict[str, Any]]:
+    def fetch_event_markets(self, event_ticker: str) -> list[dict[str, Any]]:
         """
         Fetch all open markets for a given event ticker.
         Returns empty list on error.
@@ -128,7 +128,7 @@ class KalshiCollector:
 
     def fetch_recent_trades(
         self, ticker: str, limit: int = 50
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch recent trades for a specific market ticker.
         Returns empty list on error.
@@ -151,7 +151,7 @@ class KalshiCollector:
     # State tracking
     # ------------------------------------------------------------------
 
-    def get_last_trade_id(self, ticker: str) -> Optional[str]:
+    def get_last_trade_id(self, ticker: str) -> str | None:
         key = STATE_KEY_LAST_TRADE.format(ticker=ticker)
         return self.db.state.get(key)
 
@@ -159,7 +159,7 @@ class KalshiCollector:
         key = STATE_KEY_LAST_TRADE.format(ticker=ticker)
         self.db.state.set(key, trade_id)
 
-    def get_previous_price(self, ticker: str) -> Optional[float]:
+    def get_previous_price(self, ticker: str) -> float | None:
         key = STATE_KEY_PREV_PRICE.format(ticker=ticker)
         val = self.db.state.get(key)
         if val is None:
@@ -179,8 +179,8 @@ class KalshiCollector:
 
     def _process_trades(
         self,
-        market: Dict[str, Any],
-        trades: List[Dict[str, Any]],
+        market: dict[str, Any],
+        trades: list[dict[str, Any]],
     ) -> None:
         """Analyse trades and write signals to DB as appropriate."""
         ticker = market.get("ticker", "unknown")
@@ -229,7 +229,7 @@ class KalshiCollector:
 
             self.set_last_trade_id(ticker, trade_id)
 
-    def _check_odds_move(self, market: Dict[str, Any]) -> None:
+    def _check_odds_move(self, market: dict[str, Any]) -> None:
         """Check if YES price has moved significantly since last poll."""
         ticker = market.get("ticker", "unknown")
         market_title = market.get("title", ticker)
@@ -244,6 +244,7 @@ class KalshiCollector:
 
         previous_yes = self.get_previous_price(ticker)
         if _is_odds_move(previous_yes, current_yes, self._thresholds.odds_move_pct_5min):
+            assert previous_yes is not None  # _is_odds_move returns False when previous_yes is None
             change_pct = (current_yes - previous_yes) * 100
             logger.info("Odds move detected on %s: %.1f%% -> %.1f%%",
                         ticker, previous_yes * 100, current_yes * 100)
@@ -265,7 +266,7 @@ class KalshiCollector:
             )
         self.set_previous_price(ticker, current_yes)
 
-    def _check_volume_spike(self, market: Dict[str, Any]) -> None:
+    def _check_volume_spike(self, market: dict[str, Any]) -> None:
         """Check for unusual volume vs. 24hr baseline.
 
         Deduplication: only fires once per ticker per spike. A new signal
@@ -289,7 +290,7 @@ class KalshiCollector:
             created = market.get("created_time", "")
             if created:
                 created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                age_days = max((datetime.now(timezone.utc) - created_dt).days, 1)
+                age_days = max((datetime.now(UTC) - created_dt).days, 1)
                 daily_avg = volume_total / age_days
             else:
                 return
@@ -338,7 +339,7 @@ class KalshiCollector:
             )
             self.db.state.set(state_key, f"{spike['ratio']}|{now_ts}")
 
-    def process_market(self, market: Dict[str, Any]) -> None:
+    def process_market(self, market: dict[str, Any]) -> None:
         """Process a single market: check trades, odds, and volume."""
         ticker = market.get("ticker", "")
         status = market.get("status", "")

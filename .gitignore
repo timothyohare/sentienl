@@ -14,5 +14,6 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+mutants/
 *.log
 .env

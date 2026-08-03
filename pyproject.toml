@@ -26,3 +26,32 @@ addopts = "-v --tb=short"
 [tool.coverage.run]
 source = ["sentinel"]
 omit = ["tests/*", "sentinel/scripts/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["mutants"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path.insert(...) must precede the sentinel.* imports it enables, for
+# these standalone-entrypoint scripts — imports can't move to the top.
+"sentinel/collectors/*_runner.py" = ["E402"]
+"sentinel/dispatcher/alerter_runner.py" = ["E402"]
+# Embedded HTML/CSS/Jinja template string — long lines are inherent to markup,
+# not a readability problem the E501 line-length rule is meant to catch here.
+"sentinel/dashboard/app.py" = ["E501"]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.mutmut]
+source_paths = ["sentinel"]
+# Thin wiring, not logic: entrypoint scripts (matches coverage's own
+# sentinel/scripts/* omit) and the *_runner.py main()-only wrappers. Neither
+# has (or is expected to have) dedicated unit tests — mutating them just
+# produces unkillable noise that drags the score down without pointing at
+# anything worth writing a test for.
+do_not_mutate = ["sentinel/scripts/*", "*_runner.py"]

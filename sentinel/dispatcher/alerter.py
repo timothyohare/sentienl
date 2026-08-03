@@ -14,8 +14,8 @@ normal rate-limit and quiet-hours rules like any other source.
 
 import logging
 import time as time_mod
-from datetime import datetime, time, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime, time
+from typing import Any
 
 import requests
 
@@ -68,7 +68,7 @@ class AlertFormatter:
     """Formats signals into (title, body) pairs for ntfy dispatch."""
 
     @staticmethod
-    def format_signal(signal: Dict[str, Any]) -> Tuple[str, str]:
+    def format_signal(signal: dict[str, Any]) -> tuple[str, str]:
         source = signal.get("source", "")
         signal_type = signal.get("signal_type", "")
         priority = signal.get("priority", "INFO")
@@ -89,16 +89,15 @@ class AlertFormatter:
 
     @staticmethod
     def _format_truth_social(
-        signal: Dict, payload: Dict, priority: str
-    ) -> Tuple[str, str]:
-        post_id = payload.get("post_id", "?")
+        signal: dict, payload: dict, priority: str
+    ) -> tuple[str, str]:
         text = payload.get("text", signal.get("summary", ""))
         url = payload.get("url", "")
         has_media = payload.get("has_media", False)
         is_reblog = payload.get("is_reblog", False)
         created_at = payload.get("created_at", signal.get("created_at", ""))
 
-        title = f"TRUTH SOCIAL — New Trump post"
+        title = "TRUTH SOCIAL — New Trump post"
         if is_reblog:
             title += " [retruth]"
         if has_media:
@@ -114,8 +113,8 @@ class AlertFormatter:
 
     @staticmethod
     def _format_polymarket(
-        signal: Dict, payload: Dict, signal_type: str
-    ) -> Tuple[str, str]:
+        signal: dict, payload: dict, signal_type: str
+    ) -> tuple[str, str]:
         market_name = payload.get("market_name", payload.get("market", "Unknown market"))
         market_url = payload.get("market_url", "")
 
@@ -166,7 +165,7 @@ class AlertFormatter:
         return title, body
 
     @staticmethod
-    def _format_futures(signal: Dict, payload: Dict) -> Tuple[str, str]:
+    def _format_futures(signal: dict, payload: dict) -> tuple[str, str]:
         ticker = payload.get("ticker", "?")
         name = payload.get("name", ticker)
         current_vol = payload.get("current_volume", 0)
@@ -187,7 +186,7 @@ class AlertFormatter:
         return title, body
 
     @staticmethod
-    def _format_correlated(signal: Dict, payload: Dict) -> Tuple[str, str]:
+    def _format_correlated(signal: dict, payload: dict) -> tuple[str, str]:
         sources = payload.get("sources", "multiple sources")
         window = payload.get("window_minutes", 10)
         title = "CORRELATED SIGNAL DETECTED"
@@ -211,7 +210,7 @@ class RateLimiter:
 
     def __init__(self, window_minutes: int = 5):
         self._window_seconds = window_minutes * 60
-        self._last_sent: Dict[str, float] = {}
+        self._last_sent: dict[str, float] = {}
 
     def is_rate_limited(self, source: str, priority: str) -> bool:
         """Return True if this source should be suppressed due to rate limiting."""
@@ -248,14 +247,14 @@ class Alerter:
             window_minutes=config.alerts.rate_limit_minutes
         )
         self._session = requests.Session()
-        self._last_digest_date: Optional[str] = None
+        self._last_digest_date: str | None = None
 
     # ------------------------------------------------------------------
     # Quiet hours
     # ------------------------------------------------------------------
 
     def is_suppressed_by_quiet_hours(
-        self, priority: str, now_time: Optional[time] = None
+        self, priority: str, now_time: time | None = None
     ) -> bool:
         """
         Return True if the signal should be suppressed during quiet hours.
@@ -271,7 +270,7 @@ class Alerter:
         if _priority_index(priority) >= _priority_index(suppress_below):
             return False
         # Check if we're in quiet hours
-        check_time = now_time or datetime.now(timezone.utc).time()
+        check_time = now_time or datetime.now(UTC).time()
         return is_in_window(check_time, quiet_cfg.start, quiet_cfg.end)
 
     # ------------------------------------------------------------------
@@ -287,7 +286,14 @@ class Alerter:
     ) -> bool:
         """
         Send a push notification via ntfy. Returns True on success.
+
+        No-ops when alerts.enabled is False (data-collection-only mode): the
+        signal is still marked alerted so it isn't retried forever, but no
+        network request is made.
         """
+        if not self.config.alerts.enabled:
+            logger.debug("Alerts disabled (data-collection-only mode) — not sending: %s", title)
+            return True
         url = f"{self.config.alerts.ntfy_url}/{self.config.alerts.ntfy_topic}"
         # Replace non-ASCII chars in title to avoid latin-1 encoding errors
         # in HTTP headers (requests library limitation)
@@ -315,8 +321,8 @@ class Alerter:
 
     def dispatch_signal(
         self,
-        signal: Dict[str, Any],
-        now_utc: Optional[time] = None,
+        signal: dict[str, Any],
+        now_utc: time | None = None,
     ) -> bool:
         """
         Attempt to dispatch a single signal. Returns True if sent.
@@ -367,7 +373,7 @@ class Alerter:
         Send a daily digest summarising signals from the last `since_hours` hours.
         """
         from datetime import timedelta
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         since = (now - timedelta(hours=since_hours)).isoformat()
         rows = self.db.execute_fetchall(
             "SELECT source, priority, COUNT(*) as cnt FROM signals "
@@ -375,7 +381,8 @@ class Alerter:
             (since,),
         )
         total = sum(r["cnt"] for r in rows)
-        title = f"Sentinel Daily Digest — {total} signal{'s' if total != 1 else ''} in last {since_hours}h"
+        plural = "s" if total != 1 else ""
+        title = f"Sentinel Daily Digest — {total} signal{plural} in last {since_hours}h"
         if rows:
             lines = [f"  {r['source']} / {r['priority']}: {r['cnt']}" for r in rows]
             body = "Signals by source:\n" + "\n".join(lines)
@@ -393,7 +400,7 @@ class Alerter:
         """
         signals = self.db.get_unalerted_signals()
         dispatched = 0
-        now_time = datetime.now(timezone.utc).time()
+        now_time = datetime.now(UTC).time()
         for signal in signals:
             result = self.dispatch_signal(signal, now_utc=now_time)
             if result:
@@ -402,7 +409,7 @@ class Alerter:
 
     def _should_send_digest(self) -> bool:
         """Return True if it's time to send the daily digest."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         digest_time = self.config.alerts.digest_time_utc
         today_str = now.strftime("%Y-%m-%d")
         if (now.hour == digest_time.hour
@@ -416,7 +423,13 @@ class Alerter:
         """
         Main alerter loop. Polls every 2 seconds. Blocks forever.
         """
-        logger.info("Alerter starting up")
+        if self.config.alerts.enabled:
+            logger.info("Alerter starting up")
+        else:
+            logger.info(
+                "Alerter starting up in data-collection-only mode "
+                "(alerts.enabled=false) — notifications suppressed"
+            )
         while True:
             try:
                 if self._should_send_digest():

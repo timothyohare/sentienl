@@ -7,23 +7,20 @@ responses. Verify API availability from the deployment server before relying
 on this collector in production. See human_todo.md for steps.
 """
 
-import json
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import responses as responses_lib
 
 from sentinel.collectors.polymarket import (
-    PolymarketCollector,
     GAMMA_API_BASE,
+    PolymarketCollector,
     _calculate_volume_spike,
-    _is_new_wallet,
     _is_large_bet,
+    _is_new_wallet,
     _is_odds_move,
 )
 from sentinel.core.db import Database
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

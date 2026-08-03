@@ -1,8 +1,7 @@
 """Unit tests for dispatcher/alerter.py."""
 
-import json
-from datetime import datetime, timezone, time
-from unittest.mock import MagicMock, patch, call
+from datetime import UTC, datetime, time
+from unittest.mock import MagicMock, patch
 
 import pytest
 import responses as responses_lib
@@ -12,11 +11,9 @@ from sentinel.dispatcher.alerter import (
     Alerter,
     AlertFormatter,
     RateLimiter,
-    _priority_to_ntfy_priority,
     _priority_index,
-    PRIORITY_LEVELS,
+    _priority_to_ntfy_priority,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -65,7 +62,7 @@ def make_signal(
         "payload": payload or {},
         "summary": summary,
         "alerted": 0,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -320,6 +317,18 @@ class TestNtfyDispatch:
         assert result is False
 
     @responses_lib.activate
+    def test_send_ntfy_noop_when_alerts_disabled(self, alerter):
+        alerter.config.alerts.enabled = False
+        result = alerter.send_ntfy(
+            title="Test",
+            body="Body",
+            priority="3",
+            tags="",
+        )
+        assert result is True
+        assert len(responses_lib.calls) == 0
+
+    @responses_lib.activate
     def test_send_ntfy_correct_headers(self, alerter):
         responses_lib.add(
             responses_lib.POST,
@@ -347,7 +356,10 @@ class TestDispatchSignal:
         )
         signal_id = mock_db.insert_signal(
             "truth_social", "new_post", "CRITICAL",
-            {"post_id": "123", "text": "Hello", "url": "http://x", "has_media": False, "is_reblog": False},
+            {
+                "post_id": "123", "text": "Hello", "url": "http://x",
+                "has_media": False, "is_reblog": False,
+            },
             "New post"
         )
         signal = mock_db.get_unalerted_signals()[0]
@@ -358,13 +370,13 @@ class TestDispatchSignal:
 
     @responses_lib.activate
     def test_dispatch_skipped_when_rate_limited(self, alerter, mock_db):
-        signal_id = mock_db.insert_signal(
+        mock_db.insert_signal(
             "polymarket", "large_bet", "HIGH", {}, "Big bet"
         )
         # Pre-fill the rate limiter
         alerter._rate_limiter.record_sent("polymarket")
         signal = mock_db.get_unalerted_signals()[0]
-        result = alerter.dispatch_signal(signal)
+        alerter.dispatch_signal(signal)
         # Should return False (suppressed) but still not crash
         # The signal may remain unalerted (implementation may vary on suppressed behaviour)
         # At minimum, we check ntfy was not called
@@ -372,16 +384,16 @@ class TestDispatchSignal:
 
     @responses_lib.activate
     def test_dispatch_skipped_during_quiet_hours_low(self, alerter, mock_db):
-        signal_id = mock_db.insert_signal(
+        mock_db.insert_signal(
             "futures_oil", "volume_spike", "LOW", {}, "Low spike"
         )
         signal = mock_db.get_unalerted_signals()[0]
         # Quiet hours: 17:00–21:00 UTC; LOW is suppressed
         with patch("sentinel.dispatcher.alerter.datetime") as mock_dt:
             from datetime import datetime as real_datetime
-            mock_dt.now.return_value = real_datetime(2026, 3, 27, 18, 0, 0, tzinfo=timezone.utc)
+            mock_dt.now.return_value = real_datetime(2026, 3, 27, 18, 0, 0, tzinfo=UTC)
             mock_dt.now.side_effect = None
-            result = alerter.dispatch_signal(signal, now_utc=time(18, 0))
+            alerter.dispatch_signal(signal, now_utc=time(18, 0))
         assert len(responses_lib.calls) == 0
 
 

@@ -31,7 +31,9 @@ logger = logging.getLogger("sentinel.test_alert")
 def main():
     parser = argparse.ArgumentParser(description="Send a test ntfy alert")
     parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--message", default="Sentinel test alert — if you see this, ntfy is working!")
+    parser.add_argument(
+        "--message", default="Sentinel test alert — if you see this, ntfy is working!"
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.config):

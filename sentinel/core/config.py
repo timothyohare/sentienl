@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -54,10 +54,10 @@ class TruthSocialConfig:
     account_id_fallback: str
     poll_interval_seconds: int
     alert_all_posts: bool
-    keyword_filter: List[str]
-    backoff_seconds: List[int]
-    critical_keywords: List[str] = field(default_factory=list)
-    endorsement_markers: List[str] = field(default_factory=list)
+    keyword_filter: list[str]
+    backoff_seconds: list[int]
+    critical_keywords: list[str] = field(default_factory=list)
+    endorsement_markers: list[str] = field(default_factory=list)
     default_priority: str = "MEDIUM"
 
 
@@ -73,7 +73,7 @@ class KalshiThresholds:
 class KalshiConfig:
     poll_interval_seconds: int
     api_base_url: str
-    tracked_event_tickers: List[str]
+    tracked_event_tickers: list[str]
     thresholds: KalshiThresholds
 
 
@@ -92,7 +92,7 @@ class PolymarketConfig:
     poll_interval_seconds: int
     gamma_api_url: str
     polygonscan_api_key: str
-    tracked_markets: List[str]
+    tracked_markets: list[str]
     thresholds: PolymarketThresholds
 
 
@@ -119,7 +119,7 @@ class TimeWindow:
 @dataclass
 class RollDate:
     date: str
-    tickers: List[str]
+    tickers: list[str]
     note: str
 
 
@@ -129,11 +129,11 @@ class FuturesConfig:
     alpaca_api_key: str
     alpaca_api_secret: str
     alpaca_base_url: str
-    instruments: List[FuturesInstrument]
+    instruments: list[FuturesInstrument]
     thresholds: FuturesThresholds
     active_window_utc: TimeWindow
     suppress_volume_alerts_on_roll_dates: bool
-    roll_dates: List[RollDate]
+    roll_dates: list[RollDate]
 
 
 @dataclass
@@ -145,6 +145,7 @@ class AlertsConfig:
     quiet_hours_utc: TimeWindow
     quiet_suppress_below: str
     digest_time_utc: time
+    enabled: bool = True
 
 
 @dataclass
@@ -174,7 +175,7 @@ class Config:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
-def _require(data: Dict, key: str, section: str) -> Any:
+def _require(data: dict, key: str, section: str) -> Any:
     """Raise ConfigValidationError if key is missing from data."""
     if key not in data:
         raise ConfigValidationError(
@@ -190,13 +191,13 @@ def _parse_time(value: str, field_name: str) -> time:
         if len(parts) != 2:
             raise ValueError
         return time(int(parts[0]), int(parts[1]))
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError) as exc:
         raise ConfigValidationError(
             f"Invalid time format for '{field_name}': {value!r} — expected 'HH:MM'"
-        )
+        ) from exc
 
 
-def _parse_time_window(data: Dict, section: str) -> TimeWindow:
+def _parse_time_window(data: dict, section: str) -> TimeWindow:
     start_str = _require(data, "start", section)
     end_str = _require(data, "end", section)
     return TimeWindow(
@@ -209,7 +210,7 @@ def _parse_time_window(data: Dict, section: str) -> TimeWindow:
 # Section parsers
 # ---------------------------------------------------------------------------
 
-def _parse_truth_social(data: Dict) -> TruthSocialConfig:
+def _parse_truth_social(data: dict) -> TruthSocialConfig:
     sec = "truth_social"
     handle = _require(data, "account_handle", sec)
     if not handle:
@@ -238,7 +239,7 @@ def _parse_truth_social(data: Dict) -> TruthSocialConfig:
     )
 
 
-def _parse_kalshi(data: Dict) -> KalshiConfig:
+def _parse_kalshi(data: dict) -> KalshiConfig:
     thresholds_raw = data.get("thresholds", {})
     thresholds = KalshiThresholds(
         large_bet_contracts=float(thresholds_raw.get("large_bet_contracts", 100)),
@@ -254,8 +255,7 @@ def _parse_kalshi(data: Dict) -> KalshiConfig:
     )
 
 
-def _parse_polymarket(data: Dict) -> PolymarketConfig:
-    sec = "polymarket"
+def _parse_polymarket(data: dict) -> PolymarketConfig:
     thresholds_raw = data.get("thresholds", {})
     thresholds = PolymarketThresholds(
         large_bet_usd=float(thresholds_raw.get("large_bet_usd", 5000)),
@@ -274,7 +274,7 @@ def _parse_polymarket(data: Dict) -> PolymarketConfig:
     )
 
 
-def _parse_futures(data: Dict) -> FuturesConfig:
+def _parse_futures(data: dict) -> FuturesConfig:
     sec = "futures"
     instruments_raw = data.get("instruments", [])
     if not instruments_raw:
@@ -321,7 +321,7 @@ def _parse_futures(data: Dict) -> FuturesConfig:
     )
 
 
-def _parse_alerts(data: Dict) -> AlertsConfig:
+def _parse_alerts(data: dict) -> AlertsConfig:
     sec = "alerts"
     ntfy_topic = data.get("ntfy_topic")
     if not ntfy_topic:
@@ -347,10 +347,11 @@ def _parse_alerts(data: Dict) -> AlertsConfig:
         quiet_hours_utc=quiet_window,
         quiet_suppress_below=quiet_suppress,
         digest_time_utc=digest_time,
+        enabled=bool(data.get("enabled", True)),
     )
 
 
-def _parse_database(data: Dict) -> DatabaseConfig:
+def _parse_database(data: dict) -> DatabaseConfig:
     sec = "database"
     retention = int(data.get("retention_days", 90))
     if retention < 1:
@@ -363,7 +364,7 @@ def _parse_database(data: Dict) -> DatabaseConfig:
     )
 
 
-def _parse_dashboard(data: Dict) -> DashboardConfig:
+def _parse_dashboard(data: dict) -> DashboardConfig:
     return DashboardConfig(
         host=str(data.get("host", "127.0.0.1")),
         port=int(data.get("port", 5000)),

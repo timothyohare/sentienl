@@ -19,7 +19,7 @@ import logging
 import re
 import time
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +51,8 @@ DEFAULT_POST_PRIORITY = "MEDIUM"
 
 def classify_priority(
     text: str,
-    critical_keywords: List[str],
-    endorsement_markers: List[str],
+    critical_keywords: list[str],
+    endorsement_markers: list[str],
     default_priority: str = DEFAULT_POST_PRIORITY,
 ) -> str:
     """
@@ -91,9 +91,9 @@ class TruthSocialClientProtocol(Protocol):
 
     def fetch_posts(
         self, account_id: str, limit: int = 20
-    ) -> List[Dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]: ...
 
-    def resolve_account_id(self, handle: str) -> Optional[str]: ...
+    def resolve_account_id(self, handle: str) -> str | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ class _HTMLStripper(HTMLParser):
 
     def __init__(self):
         super().__init__()
-        self._parts: List[str] = []
+        self._parts: list[str] = []
 
     def handle_data(self, data: str) -> None:
         self._parts.append(data)
@@ -132,7 +132,7 @@ def _extract_text(html: str, max_chars: int = 280) -> str:
     return text
 
 
-def _build_summary(post: Dict[str, Any], text: str) -> str:
+def _build_summary(post: dict[str, Any], text: str) -> str:
     """Build a one-line human-readable summary for the signals table."""
     post_id = post.get("id", "?")
     short_text = text[:120] + "..." if len(text) > 120 else text
@@ -154,7 +154,7 @@ class TruthSocialCollector:
         collector.run()  # blocks forever
     """
 
-    def __init__(self, config, db, client: Optional[TruthSocialClientProtocol] = None):
+    def __init__(self, config, db, client: TruthSocialClientProtocol | None = None):
         self.config = config
         self.db = db
         self.client = client
@@ -204,7 +204,7 @@ class TruthSocialCollector:
     # Post fetching
     # ------------------------------------------------------------------
 
-    def fetch_posts(self, account_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def fetch_posts(self, account_id: str, limit: int = 20) -> list[dict[str, Any]]:
         """
         Fetch recent posts for the given account ID.
         Returns an empty list on any error.
@@ -226,8 +226,8 @@ class TruthSocialCollector:
     # ------------------------------------------------------------------
 
     def filter_new_posts(
-        self, posts: List[Dict[str, Any]], last_post_id: Optional[str]
-    ) -> List[Dict[str, Any]]:
+        self, posts: list[dict[str, Any]], last_post_id: str | None
+    ) -> list[dict[str, Any]]:
         """
         Return posts with IDs numerically greater than last_post_id.
         Posts are assumed to be ordered newest-first from the API.
@@ -255,7 +255,7 @@ class TruthSocialCollector:
     # Signal creation
     # ------------------------------------------------------------------
 
-    def process_post(self, post: Dict[str, Any]) -> Optional[int]:
+    def process_post(self, post: dict[str, Any]) -> int | None:
         """
         Write a new_post signal to the database for the given post.
         Returns the signal ID.
@@ -299,7 +299,7 @@ class TruthSocialCollector:
     # State tracking
     # ------------------------------------------------------------------
 
-    def get_last_post_id(self) -> Optional[str]:
+    def get_last_post_id(self) -> str | None:
         return self.db.state.get(STATE_KEY_LAST_POST_ID)
 
     def set_last_post_id(self, post_id: str) -> None:
