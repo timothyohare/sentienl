@@ -333,7 +333,7 @@ class FuturesVolumeCollector:
             "Volume spike %s: %.0f contracts (%.2fx avg %.0f) price=%.2f",
             ticker, current_volume, ratio, rolling_avg, close_price,
         )
-        self.db.insert_signal(
+        signal_id = self.db.insert_signal(
             source=source,
             signal_type="volume_spike",
             priority=priority,
@@ -353,6 +353,10 @@ class FuturesVolumeCollector:
                 f"({ratio:.2f}x avg {rolling_avg:,.0f})"
             ),
         )
+        # Price follow-through tracking (plans/05-price-follow-through.md):
+        # HIGH/CRITICAL only — price_followup.py backfills t15/t60/t240/t1440.
+        if priority in ("HIGH", "CRITICAL") and close_price > 0:
+            self.db.price_tracking.insert(signal_id, source, ticker, price_t0=close_price)
 
     # ------------------------------------------------------------------
     # Main polling loop

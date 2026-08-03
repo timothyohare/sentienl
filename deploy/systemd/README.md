@@ -1,9 +1,9 @@
 # Sentinel systemd supervision (user units)
 
-Runs the alerter (+ correlation detector), Truth Social, Kalshi, and futures
-collectors under `systemd --user`, with automatic restart on crash. No root
-required. Polymarket is intentionally excluded — it's ACMA-blocked in
-Australia and replaced by Kalshi (see repo `CLAUDE.md`).
+Runs the alerter (+ correlation detector), Truth Social, Kalshi, futures, and
+price-follow-through collectors under `systemd --user`, with automatic
+restart on crash. No root required. Polymarket is intentionally excluded —
+it's ACMA-blocked in Australia and replaced by Kalshi (see repo `CLAUDE.md`).
 
 ## Prereqs
 
@@ -30,7 +30,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now sentinel.target
 ```
 
-`sentinel.target` pulls in all four services (`Wants=`). Each service also
+`sentinel.target` pulls in all five services (`Wants=`). Each service also
 has its own `[Install]` block, so `systemctl --user enable sentinel-kalshi`
 etc. works individually if you only want a subset running.
 
@@ -49,7 +49,7 @@ systemctl --user status sentinel-kalshi
 systemctl --user restart sentinel-truth-social
 systemctl --user stop sentinel.target        # stop everything
 journalctl --user -u sentinel-kalshi -f      # tail logs for one unit
-journalctl --user -u 'sentinel-*' -f         # tail all four
+journalctl --user -u 'sentinel-*' -f         # tail all five
 ```
 
 ## Healthcheck
@@ -69,6 +69,20 @@ of these units. `false` (the current setting) is data-collection-only mode —
 collectors and the correlation detector still write to `signals`, but no ntfy
 push goes out. Flip to `true` and restart `sentinel-alerter` to resume live
 alerting.
+
+## Price follow-through
+
+`sentinel-price-followup` backfills `post_price_tracking` (t15/t60/t240/t1440
+prices) for HIGH/CRITICAL Kalshi and futures signals every 5 minutes — see
+`plans/05-price-follow-through.md`. It's lightweight (no browser, no
+continuous polling loop beyond that cadence) and doesn't need `config.yaml`.
+Once enough data has accumulated, run:
+
+```bash
+python sentinel/scripts/signal_scorecard.py
+```
+
+to see per-(source, signal_type) effect sizes vs. baseline.
 
 ## Changing the install path
 

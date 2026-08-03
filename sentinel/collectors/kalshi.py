@@ -174,6 +174,36 @@ class KalshiCollector:
         self.db.state.set(key, str(price))
 
     # ------------------------------------------------------------------
+    # Price follow-through tracking (plans/05-price-follow-through.md)
+    # ------------------------------------------------------------------
+
+    def _maybe_track_price(
+        self, signal_id: int, priority: str, ticker: str, price: float
+    ) -> None:
+        """Snapshot price_t0 for HIGH/CRITICAL signals so price_followup.py
+        can backfill the later horizons and measure real follow-through."""
+        if priority in ("HIGH", "CRITICAL") and price > 0:
+            self.db.price_tracking.insert(signal_id, "kalshi", ticker, price_t0=price)
+
+    def fetch_market(self, ticker: str) -> dict[str, Any] | None:
+        """
+        Fetch a single market by ticker. Returns None on error.
+
+        Used by price_followup.py to backfill later price horizons, since
+        fetch_event_markets() only returns markets for a whole event.
+        """
+        url = f"{self._api_base}/markets/{ticker}"
+        try:
+            resp = self._client.get(url)
+            if resp.status_code == 200:
+                return resp.json().get("market")
+            logger.warning("Kalshi market API returned HTTP %d for %r",
+                           resp.status_code, ticker)
+        except Exception as exc:
+            logger.error("Failed to fetch Kalshi market %r: %s", ticker, exc)
+        return None
+
+    # ------------------------------------------------------------------
     # Signal processing
     # ------------------------------------------------------------------
 
@@ -221,7 +251,7 @@ class KalshiCollector:
             # --- Large bet signal ---
             if _is_large_bet(count_fp, self._thresholds.large_bet_contracts):
                 logger.info("Large bet detected: %.0f contracts on %s", count_fp, ticker)
-                self.db.insert_signal(
+                signal_id = self.db.insert_signal(
                     source="kalshi",
                     signal_type="large_bet",
                     priority="HIGH",
@@ -235,6 +265,7 @@ class KalshiCollector:
                     },
                     summary=f"Large bet {count_fp:,.0f} contracts ({taker_side}) on {market_title}",
                 )
+                self._maybe_track_price(signal_id, "HIGH", ticker, yes_price)
 
             self.set_last_trade_id(ticker, trade_id)
 
@@ -257,7 +288,7 @@ class KalshiCollector:
             change_pct = (current_yes - previous_yes) * 100
             logger.info("Odds move detected on %s: %.1f%% -> %.1f%%",
                         ticker, previous_yes * 100, current_yes * 100)
-            self.db.insert_signal(
+            signal_id = self.db.insert_signal(
                 source="kalshi",
                 signal_type="odds_move",
                 priority="MEDIUM",
@@ -273,6 +304,7 @@ class KalshiCollector:
                     f"(YES: {previous_yes*100:.0f}% -> {current_yes*100:.0f}%)"
                 ),
             )
+            self._maybe_track_price(signal_id, "MEDIUM", ticker, current_yes)
         self.set_previous_price(ticker, current_yes)
 
     def _check_volume_spike(self, market: dict[str, Any]) -> None:
@@ -290,6 +322,11 @@ class KalshiCollector:
             volume_total = float(market.get("volume_fp", 0))
         except (ValueError, TypeError):
             return
+
+        try:
+            current_price = float(market.get("last_price_dollars", 0))
+        except (ValueError, TypeError):
+            current_price = 0.0
 
         if volume_total <= 0:
             return
@@ -330,7 +367,7 @@ class KalshiCollector:
                     pass  # corrupted state, re-fire
 
             logger.info("Volume spike on %s: %.1fx baseline", ticker, spike["ratio"])
-            self.db.insert_signal(
+            signal_id = self.db.insert_signal(
                 source="kalshi",
                 signal_type="volume_spike",
                 priority="MEDIUM",
@@ -346,6 +383,7 @@ class KalshiCollector:
                     f"(24h: {volume_24h:,.0f}, avg: {daily_avg:,.0f})"
                 ),
             )
+            self._maybe_track_price(signal_id, "MEDIUM", ticker, current_price)
             self.db.state.set(state_key, f"{spike['ratio']}|{now_ts}")
 
     def process_market(self, market: dict[str, Any]) -> None:

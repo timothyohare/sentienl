@@ -526,6 +526,66 @@ class TestPriorityBranches:
     # have fired.
 
 
+# ---------------------------------------------------------------------------
+# Price follow-through tracking (plans/05-price-follow-through.md): HIGH
+# volume_spike signals get a post_price_tracking row; MEDIUM ones don't.
+# ---------------------------------------------------------------------------
+
+class TestPriceTracking:
+    @staticmethod
+    def _instrument():
+        return mock_config_instrument("CL=F", "WTI Oil", 500)
+
+    def test_high_priority_spike_is_tracked(self, collector, mock_db):
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 400)
+        bar = {"volume": 3000, "close": 76.0, "open": 75.0}  # ratio >> 5x -> HIGH
+        collector.process_instrument(self._instrument(), bar, time(14, 0), "2026-03-27")
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        assert sig["priority"] == "HIGH"
+
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (sig["id"],)
+        )
+        assert len(rows) == 1
+        assert rows[0]["source"] == "futures_oil"
+        assert rows[0]["instrument"] == "CL=F"
+        assert rows[0]["price_t0"] == 76.0
+
+    def test_medium_priority_spike_is_not_tracked(self, collector, mock_db):
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 400)
+        bar = {"volume": 1600, "close": 76.0, "open": 75.0}  # 4x, below quiet(5x) -> MEDIUM
+        collector.process_instrument(self._instrument(), bar, time(14, 0), "2026-03-27")
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        assert sig["priority"] == "MEDIUM"
+
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (sig["id"],)
+        )
+        assert rows == []
+
+    def test_zero_close_price_is_not_tracked(self, collector, mock_db):
+        """A zero close price shouldn't produce a bogus price_t0=0 row."""
+        for _ in range(19):
+            collector.add_volume_observation("CL=F", 400)
+        bar = {"volume": 3000, "close": 0, "open": 0}
+        collector.process_instrument(self._instrument(), bar, time(14, 0), "2026-03-27")
+        sig = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        assert sig["priority"] == "HIGH"
+
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (sig["id"],)
+        )
+        assert rows == []
+
+
 class TestAddVolumeObservationEviction:
     def test_oldest_entry_evicted_when_over_cap(self, collector):
         """del history[0] must drop the OLDEST observation, not history[1]."""

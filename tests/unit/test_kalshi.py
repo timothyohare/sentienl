@@ -359,6 +359,90 @@ class TestProcessMarket:
 
 
 # ---------------------------------------------------------------------------
+# Price follow-through tracking (plans/05-price-follow-through.md): HIGH
+# signals get a post_price_tracking row so price_followup.py can backfill
+# later horizons; MEDIUM signals (odds_move, volume_spike as currently
+# configured) do not.
+# ---------------------------------------------------------------------------
+
+class TestPriceTracking:
+    def _mock_trades(self, collector, trades):
+        collector.fetch_recent_trades = MagicMock(return_value=trades)
+
+    def test_large_bet_high_priority_is_tracked(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_last_trade_id(ticker, "seed-trade-0")
+        large_trade = dict(SAMPLE_TRADE)
+        large_trade["count_fp"] = "200.00"
+        self._mock_trades(collector, [large_trade])
+        collector.process_market(SAMPLE_MARKET)
+
+        signal = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "large_bet"
+        )
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (signal["id"],)
+        )
+        assert len(rows) == 1
+        assert rows[0]["source"] == "kalshi"
+        assert rows[0]["instrument"] == ticker
+        assert rows[0]["price_t0"] == pytest.approx(0.35)
+
+    def test_odds_move_medium_priority_is_not_tracked(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_previous_price(ticker, 0.25)
+        moved_market = dict(SAMPLE_MARKET)
+        moved_market["last_price_dollars"] = "0.3500"
+
+        self._mock_trades(collector, [])
+        collector.process_market(moved_market)
+
+        signal = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "odds_move"
+        )
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (signal["id"],)
+        )
+        assert rows == []
+
+    def test_volume_spike_medium_priority_is_not_tracked(self, collector, mock_db):
+        spiked = dict(SAMPLE_MARKET)
+        created_30d_ago = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        spiked["created_time"] = created_30d_ago
+        spiked["volume_fp"] = "3000.00"
+        spiked["volume_24h_fp"] = "500.00"
+
+        self._mock_trades(collector, [])
+        collector.process_market(spiked)
+
+        signal = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (signal["id"],)
+        )
+        assert rows == []
+
+    def test_zero_price_is_not_tracked(self, collector, mock_db):
+        """A zero/unparseable price shouldn't produce a bogus price_t0=0 row."""
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_last_trade_id(ticker, "seed-trade-0")
+        large_trade = dict(SAMPLE_TRADE)
+        large_trade["count_fp"] = "200.00"
+        large_trade["yes_price_dollars"] = "0.00"
+        self._mock_trades(collector, [large_trade])
+        collector.process_market(SAMPLE_MARKET)
+
+        signal = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "large_bet"
+        )
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (signal["id"],)
+        )
+        assert rows == []
+
+
+# ---------------------------------------------------------------------------
 # Cold-start regression: a ticker's first-ever poll must not flood on
 # Kalshi's trade-history backlog (fixed 2026-08-03 — see kalshi.py
 # _process_trades). Mirrors the guard _check_odds_move already had via
