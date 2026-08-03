@@ -91,6 +91,78 @@ def client(app):
     return app.test_client()
 
 
+class TestToAest:
+    def test_z_suffix_converted(self):
+        from sentinel.dashboard.app import _to_aest
+        assert _to_aest("2026-03-27T00:00:00Z") == "27 Mar 2026 10:00:00 AEST"
+
+    def test_offset_suffix_converted(self):
+        from sentinel.dashboard.app import _to_aest
+        assert _to_aest("2026-03-27T00:00:00+00:00") == "27 Mar 2026 10:00:00 AEST"
+
+    def test_naive_treated_as_utc(self):
+        from sentinel.dashboard.app import _to_aest
+        assert _to_aest("2026-03-27T00:00:00") == "27 Mar 2026 10:00:00 AEST"
+
+    def test_unparseable_returns_original_string(self):
+        from sentinel.dashboard.app import _to_aest
+        assert _to_aest("not-a-timestamp") == "not-a-timestamp"
+
+    def test_offset_is_added_not_subtracted(self):
+        from sentinel.dashboard.app import _to_aest
+        # 23:00 UTC + 10h = 09:00 AEST the next day
+        assert _to_aest("2026-03-27T23:00:00+00:00") == "28 Mar 2026 09:00:00 AEST"
+
+
+class TestEnrichSignal:
+    def test_adds_created_at_aest(self):
+        from sentinel.dashboard.app import _enrich_signal
+        result = _enrich_signal({"created_at": "2026-03-27T00:00:00Z", "priority": "HIGH"})
+        assert result["created_at_aest"] == "27 Mar 2026 10:00:00 AEST"
+
+    def test_missing_created_at_defaults_empty(self):
+        from sentinel.dashboard.app import _enrich_signal
+        result = _enrich_signal({"priority": "HIGH"})
+        assert result["created_at_aest"] == ""
+
+    def test_colour_per_priority(self):
+        from sentinel.dashboard.app import _enrich_signal
+        assert _enrich_signal({"priority": "CRITICAL"})["colour"] == "#dc2626"
+        assert _enrich_signal({"priority": "HIGH"})["colour"] == "#ea580c"
+        assert _enrich_signal({"priority": "MEDIUM"})["colour"] == "#ca8a04"
+        assert _enrich_signal({"priority": "LOW"})["colour"] == "#2563eb"
+        assert _enrich_signal({"priority": "INFO"})["colour"] == "#6b7280"
+
+    def test_missing_priority_defaults_to_info_colour(self):
+        from sentinel.dashboard.app import _enrich_signal
+        assert _enrich_signal({})["colour"] == "#6b7280"
+
+    def test_unknown_priority_defaults_to_grey(self):
+        from sentinel.dashboard.app import _enrich_signal
+        assert _enrich_signal({"priority": "BOGUS"})["colour"] == "#6b7280"
+
+    def test_dict_payload_pretty_printed_json(self):
+        from sentinel.dashboard.app import _enrich_signal
+        result = _enrich_signal({"payload": {"a": 1}})
+        assert result["payload_json"] == json.dumps({"a": 1}, indent=2)
+
+    def test_non_dict_payload_stringified(self):
+        from sentinel.dashboard.app import _enrich_signal
+        result = _enrich_signal({"payload": "raw string"})
+        assert result["payload_json"] == "raw string"
+
+    def test_missing_payload_defaults_empty_json_object(self):
+        from sentinel.dashboard.app import _enrich_signal
+        result = _enrich_signal({})
+        assert result["payload_json"] == "{}"
+
+    def test_does_not_mutate_input_dict(self):
+        from sentinel.dashboard.app import _enrich_signal
+        original = {"priority": "HIGH"}
+        _enrich_signal(original)
+        assert "colour" not in original
+
+
 class TestDashboardRoutes:
     def test_home_returns_200(self, client):
         response = client.get("/")
