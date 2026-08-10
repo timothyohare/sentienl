@@ -54,6 +54,7 @@ class TestDatabaseInit:
         assert "state" in tables
         assert "wallet_cache" in tables
         assert "post_price_tracking" in tables
+        assert "price_samples" in tables
 
 
 class TestSignalInsert:
@@ -272,6 +273,50 @@ class TestPostPriceTracking:
         tmp_db.price_tracking.insert(sid, "truth_social", "CL=F", price_t0=75.50)
         pending = tmp_db.price_tracking.get_pending_updates()
         assert any(r["signal_id"] == sid for r in pending)
+
+    def test_distinct_instruments_empty(self, tmp_db):
+        assert tmp_db.price_tracking.distinct_instruments() == []
+
+    def test_distinct_instruments_dedups_same_instrument(self, tmp_db):
+        sid1 = tmp_db.insert_signal("kalshi", "large_bet", "HIGH", {}, "Bet 1")
+        sid2 = tmp_db.insert_signal("kalshi", "large_bet", "HIGH", {}, "Bet 2")
+        tmp_db.price_tracking.insert(sid1, "kalshi", "KXFOO", price_t0=0.30)
+        tmp_db.price_tracking.insert(sid2, "kalshi", "KXFOO", price_t0=0.32)
+        assert tmp_db.price_tracking.distinct_instruments() == [("kalshi", "KXFOO")]
+
+    def test_distinct_instruments_multiple_sources(self, tmp_db):
+        sid1 = tmp_db.insert_signal("kalshi", "large_bet", "HIGH", {}, "Bet")
+        sid2 = tmp_db.insert_signal("futures_gold", "volume_spike", "HIGH", {}, "Spike")
+        tmp_db.price_tracking.insert(sid1, "kalshi", "KXFOO", price_t0=0.30)
+        tmp_db.price_tracking.insert(sid2, "futures_gold", "GC=F", price_t0=2400.0)
+        assert set(tmp_db.price_tracking.distinct_instruments()) == {
+            ("kalshi", "KXFOO"), ("futures_gold", "GC=F"),
+        }
+
+
+class TestPriceSamples:
+    def test_get_samples_empty(self, tmp_db):
+        assert tmp_db.price_samples.get_samples("kalshi", "KXFOO") == []
+
+    def test_insert_and_get_samples(self, tmp_db):
+        tmp_db.price_samples.insert("kalshi", "KXFOO", 0.30)
+        samples = tmp_db.price_samples.get_samples("kalshi", "KXFOO")
+        assert len(samples) == 1
+        assert samples[0]["price"] == 0.30
+        assert samples[0]["sampled_at"]
+
+    def test_get_samples_ordered_oldest_first(self, tmp_db):
+        tmp_db.price_samples.insert("kalshi", "KXFOO", 0.30, sampled_at="2026-08-01T00:10:00+00:00")
+        tmp_db.price_samples.insert("kalshi", "KXFOO", 0.25, sampled_at="2026-08-01T00:00:00+00:00")
+        samples = tmp_db.price_samples.get_samples("kalshi", "KXFOO")
+        assert [s["price"] for s in samples] == [0.25, 0.30]
+
+    def test_get_samples_filters_by_instrument(self, tmp_db):
+        tmp_db.price_samples.insert("kalshi", "KXFOO", 0.30)
+        tmp_db.price_samples.insert("kalshi", "KXBAR", 0.50)
+        samples = tmp_db.price_samples.get_samples("kalshi", "KXFOO")
+        assert len(samples) == 1
+        assert samples[0]["price"] == 0.30
 
 
 class TestRetentionCleanup:

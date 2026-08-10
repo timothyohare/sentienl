@@ -14,7 +14,9 @@ from sentinel.scripts.price_followup import (
     CompositePriceFetcher,
     due_updates,
     group_by_instrument,
+    random_window_effect_sizes,
     run_once,
+    sample_baseline_prices,
 )
 
 # ---------------------------------------------------------------------------
@@ -116,6 +118,101 @@ class TestGroupByInstrument:
         due = [(row1, "price_t15"), (row2, "price_t15")]
         groups = group_by_instrument(due)
         assert set(groups.keys()) == {("kalshi", "T1"), ("kalshi", "T2")}
+
+
+# ---------------------------------------------------------------------------
+# random_window_effect_sizes() — true random-window baseline math (pure)
+# ---------------------------------------------------------------------------
+
+class TestRandomWindowEffectSizes:
+    def test_pair_at_exact_horizon_included(self):
+        samples = [
+            {"price": 100.0, "sampled_at": _iso(30)},
+            {"price": 110.0, "sampled_at": _iso(15)},  # 15min gap
+        ]
+        sizes = random_window_effect_sizes(samples, horizon_minutes=15)
+        assert sizes == pytest.approx([0.10])
+
+    def test_pair_outside_tolerance_excluded(self):
+        samples = [
+            {"price": 100.0, "sampled_at": _iso(60)},
+            {"price": 110.0, "sampled_at": _iso(15)},  # 45min gap, horizon=15 tolerance=3
+        ]
+        assert random_window_effect_sizes(samples, horizon_minutes=15) == []
+
+    def test_gap_below_lower_bound_excluded(self):
+        samples = [
+            {"price": 100.0, "sampled_at": _iso(20)},
+            {"price": 110.0, "sampled_at": _iso(15)},  # 5min gap, horizon=15 tolerance=3
+        ]
+        assert random_window_effect_sizes(samples, horizon_minutes=15) == []
+
+    def test_multiple_pairs_from_three_samples(self):
+        samples = [
+            {"price": 100.0, "sampled_at": _iso(30)},
+            {"price": 105.0, "sampled_at": _iso(15)},  # 15min gap from sample 0
+            {"price": 110.0, "sampled_at": _iso(0)},   # 15min from sample 1, 30min from sample 0
+        ]
+        sizes = random_window_effect_sizes(samples, horizon_minutes=15)
+        # (0,1): |105-100|/100=0.05  (1,2): |110-105|/105≈0.0476  (0,2): 30min gap excluded
+        assert sizes == pytest.approx([0.05, 5.0 / 105])
+
+    def test_single_sample_returns_empty(self):
+        assert random_window_effect_sizes([{"price": 100.0, "sampled_at": _iso(0)}], 15) == []
+
+    def test_empty_samples_returns_empty(self):
+        assert random_window_effect_sizes([], 15) == []
+
+    def test_custom_tolerance(self):
+        samples = [
+            {"price": 100.0, "sampled_at": _iso(70)},
+            {"price": 110.0, "sampled_at": _iso(0)},  # 70min gap, horizon=60
+        ]
+        assert random_window_effect_sizes(samples, horizon_minutes=60, tolerance_minutes=5) == []
+        assert random_window_effect_sizes(
+            samples, horizon_minutes=60, tolerance_minutes=15
+        ) == pytest.approx([0.10])
+
+
+# ---------------------------------------------------------------------------
+# sample_baseline_prices() — continuous baseline sampling
+# ---------------------------------------------------------------------------
+
+class TestSampleBaselinePrices:
+    def test_samples_every_distinct_tracked_instrument(self, mock_db):
+        sid1 = mock_db.insert_signal(
+            source="kalshi", signal_type="large_bet", priority="HIGH", payload={}, summary="x",
+        )
+        sid2 = mock_db.insert_signal(
+            source="futures_gold", signal_type="volume_spike", priority="HIGH",
+            payload={}, summary="y",
+        )
+        mock_db.price_tracking.insert(sid1, "kalshi", "T1", price_t0=0.30)
+        mock_db.price_tracking.insert(sid2, "futures_gold", "GC=F", price_t0=2400.0)
+
+        fetcher = FakeFetcher({("kalshi", "T1"): 0.35, ("futures_gold", "GC=F"): 2410.0})
+        sampled = sample_baseline_prices(mock_db, fetcher)
+
+        assert sampled == 2
+        assert set(fetcher.calls) == {("kalshi", "T1"), ("futures_gold", "GC=F")}
+        assert [s["price"] for s in mock_db.price_samples.get_samples("kalshi", "T1")] == [0.35]
+
+    def test_no_tracked_instruments_makes_no_calls(self, mock_db):
+        fetcher = FakeFetcher({})
+        assert sample_baseline_prices(mock_db, fetcher) == 0
+        assert fetcher.calls == []
+
+    def test_missing_price_is_skipped_without_error(self, mock_db):
+        sid = mock_db.insert_signal(
+            source="kalshi", signal_type="large_bet", priority="HIGH", payload={}, summary="x",
+        )
+        mock_db.price_tracking.insert(sid, "kalshi", "T1", price_t0=0.30)
+
+        fetcher = FakeFetcher({})  # no price available
+        sampled = sample_baseline_prices(mock_db, fetcher)
+
+        assert sampled == 0
+        assert mock_db.price_samples.get_samples("kalshi", "T1") == []
 
 
 # ---------------------------------------------------------------------------

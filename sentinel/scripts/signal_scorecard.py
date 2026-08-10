@@ -8,16 +8,19 @@ Unlike signal_diagnostics.py's burst/correlation proxies, this uses the
 actual event-study number: the percent price move after each HIGH/CRITICAL
 signal, per (source, signal_type, horizon).
 
-Baseline caveat: a rigorous baseline would compare against random
-(non-signal-triggered) windows on the same instrument at the same time of
-day. That needs a continuous price history this schema doesn't collect —
-deliberately out of scope for plan 05 ("no schema change needed"). The
-baseline used here is the pooled median effect size across all OTHER
-tracked (source, signal_type) pairs at the same horizon. It's a real,
-data-derived comparison bar (not a heuristic guess), but it is *not* a true
-random-time null hypothesis — a signal type "beating baseline" here means
-"moved more than other tracked signals typically do," not "moved more than
-market noise typically does." Treat it as a lower bar to clear.
+Baseline: `price_followup.py`'s backfill cadence also drops a continuous,
+non-signal-triggered price sample per tracked instrument into
+`price_samples` (plan 05's originally-deferred "true random-window
+baseline" scope). Where enough of those samples exist for a horizon, this
+script uses their pooled median effect size as the baseline — a real
+"how much does this instrument normally move over N minutes" null. Until
+enough samples accumulate for a horizon (t1440 needs about a day of 5-min
+sampling before any pair even exists), that horizon falls back to the
+pooled median effect size across all OTHER tracked (source, signal_type)
+pairs — a proxy, not a true null hypothesis: "moved more than other
+tracked signals typically do," not "moved more than market noise
+typically does." Each printed line is tagged `[random]` or `[proxy]` so
+it's clear which bar was actually cleared.
 
 Exit code is always 0 — this is a reporting tool, not a pass/fail gate.
 """
@@ -32,11 +35,13 @@ from statistics import median
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from sentinel.core.db import Database
+from sentinel.scripts.price_followup import HORIZONS as HORIZON_MINUTES
+from sentinel.scripts.price_followup import random_window_effect_sizes
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("sentinel.signal_scorecard")
 
-HORIZONS = ("price_t15", "price_t60", "price_t240", "price_t1440")
+HORIZONS = tuple(column for column, _minutes in HORIZON_MINUTES)
 
 
 def _fetch_tracked_rows(db: Database) -> list[dict]:
@@ -78,15 +83,48 @@ def compute_baseline(sizes: dict[tuple[str, str, str], list[float]]) -> dict[str
     return {horizon: median(values) for horizon, values in by_horizon.items() if values}
 
 
-def build_scorecard(rows: list[dict]) -> list[dict]:
+def compute_random_baseline(
+    db: Database, instruments: set[tuple[str, str]], min_samples: int = 5
+) -> dict[str, float]:
+    """True random-window baseline: pooled median effect size from
+    `price_samples` pairs (see `price_followup.random_window_effect_sizes`),
+    across every tracked (source, instrument), per horizon. A horizon is
+    included only once it has at least `min_samples` pooled data points —
+    otherwise `build_scorecard()` falls back to the pooled-proxy baseline
+    for that horizon."""
+    by_horizon: dict[str, list[float]] = defaultdict(list)
+    for source, instrument in instruments:
+        samples = db.price_samples.get_samples(source, instrument)
+        for column, horizon_minutes in HORIZON_MINUTES:
+            by_horizon[column].extend(random_window_effect_sizes(samples, horizon_minutes))
+    return {
+        horizon: median(values)
+        for horizon, values in by_horizon.items()
+        if len(values) >= min_samples
+    }
+
+
+def build_scorecard(
+    rows: list[dict], random_baseline: dict[str, float] | None = None
+) -> list[dict]:
     """Per (source, signal_type, horizon): sample size, median effect size,
-    and whether it beats the pooled baseline for that horizon."""
+    and whether it beats the baseline for that horizon. Prefers the true
+    random-window baseline (see compute_random_baseline) where enough
+    price_samples data exists; falls back to the pooled-proxy baseline
+    (median across other tracked signal types — see module docstring) for
+    any horizon without it yet."""
+    random_baseline = random_baseline or {}
     sizes = compute_effect_sizes(rows)
-    baseline = compute_baseline(sizes)
+    proxy_baseline = compute_baseline(sizes)
 
     scorecard = []
     for (source, signal_type, horizon), values in sorted(sizes.items()):
-        baseline_value = baseline.get(horizon, 0.0)
+        if horizon in random_baseline:
+            baseline_value = random_baseline[horizon]
+            baseline_source = "random_window"
+        else:
+            baseline_value = proxy_baseline.get(horizon, 0.0)
+            baseline_source = "pooled_proxy"
         median_value = median(values)
         scorecard.append({
             "source": source,
@@ -95,6 +133,7 @@ def build_scorecard(rows: list[dict]) -> list[dict]:
             "n": len(values),
             "median_effect_size": median_value,
             "baseline_effect_size": baseline_value,
+            "baseline_source": baseline_source,
             "beats_baseline": median_value > baseline_value,
         })
     return scorecard
@@ -104,7 +143,7 @@ def main():
     parser = argparse.ArgumentParser(description="Sentinel price follow-through scorecard")
     parser.add_argument("--db", default=os.environ.get("SENTINEL_DB", "sentinel.db"))
     parser.add_argument(
-        "--min-sample", type=int, default=5,
+        "--min-sample", type=int, default=3,
         help="Minimum sample size to report a group (smaller samples are noisy)",
     )
     args = parser.parse_args()
@@ -116,29 +155,34 @@ def main():
     db = Database(args.db)
     db.init()
     rows = _fetch_tracked_rows(db)
+    instruments = {(r["source"], r["instrument"]) for r in rows}
+    random_baseline = compute_random_baseline(db, instruments)
     db.close()
 
     if not rows:
         logger.info("No price-tracked signals yet — nothing to score.")
         sys.exit(0)
 
-    scorecard = build_scorecard(rows)
+    scorecard = build_scorecard(rows, random_baseline)
 
     logger.info("=== Signal-to-noise scorecard (price follow-through) ===")
-    logger.info("Baseline = pooled median effect size across all tracked signal types at")
-    logger.info("that horizon (not a true random-window baseline — see script docstring).")
+    logger.info("[random] = true random-window baseline from price_samples.")
+    logger.info("[proxy]  = pooled median across other tracked signal types")
+    logger.info("           (not a true null — see script docstring), used until")
+    logger.info("           enough price_samples accumulate for that horizon.")
     logger.info("")
     reported = 0
     for entry in scorecard:
         if entry["n"] < args.min_sample:
             continue
         reported += 1
+        tag = "[random]" if entry["baseline_source"] == "random_window" else "[proxy] "
         verdict = "beats baseline" if entry["beats_baseline"] else "at/below baseline"
         logger.info(
-            "  %-14s %-14s %-11s n=%-4d median=%.3f%% baseline=%.3f%% (%s)",
+            "  %-14s %-14s %-11s n=%-4d median=%.3f%% baseline=%.3f%% %s (%s)",
             entry["source"], entry["signal_type"], entry["horizon"],
             entry["n"], entry["median_effect_size"] * 100,
-            entry["baseline_effect_size"] * 100, verdict,
+            entry["baseline_effect_size"] * 100, tag, verdict,
         )
 
     skipped = len(scorecard) - reported

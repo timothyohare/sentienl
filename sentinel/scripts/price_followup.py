@@ -11,6 +11,13 @@ that instrument, not once per row/column.
 
 Run on a timer (every 5-10 min is enough — the coarsest horizon that can go
 stale from a slow cadence is +15 min).
+
+Each run also snapshots the current price for every instrument that has
+ever been signal-tracked, into `price_samples` — independent of whether a
+signal fired this run. That continuous, non-signal-triggered history is
+what `signal_scorecard.py` uses to build a true random-window baseline
+(plan 05's originally deferred scope), instead of comparing signal types
+only against each other.
 """
 
 import argparse
@@ -85,6 +92,33 @@ def group_by_instrument(
         key = (row["source"], row["instrument"])
         groups.setdefault(key, []).append((row, column))
     return groups
+
+
+def random_window_effect_sizes(
+    samples: list[dict[str, Any]],
+    horizon_minutes: float,
+    tolerance_minutes: float | None = None,
+) -> list[float]:
+    """True random-window baseline math: given time-ordered (oldest-first)
+    price samples for one instrument, return abs(price_delta)/price for
+    every sample pair whose time gap falls within horizon_minutes +/-
+    tolerance. This measures how much the instrument moves over N minutes
+    when nothing signal-worthy happened, from routine backfill-cadence
+    sampling — not another signal-triggered measurement.
+    """
+    tolerance = tolerance_minutes if tolerance_minutes is not None else horizon_minutes * 0.2
+    lower, upper = horizon_minutes - tolerance, horizon_minutes + tolerance
+    sizes = []
+    for i, s1 in enumerate(samples):
+        t1 = datetime.fromisoformat(str(s1["sampled_at"]).replace("Z", "+00:00"))
+        for s2 in samples[i + 1:]:
+            t2 = datetime.fromisoformat(str(s2["sampled_at"]).replace("Z", "+00:00"))
+            gap_minutes = (t2 - t1).total_seconds() / 60
+            if gap_minutes > upper:
+                break  # samples are time-ordered: no later pair will be closer
+            if gap_minutes >= lower:
+                sizes.append(abs(s2["price"] - s1["price"]) / abs(s1["price"]))
+    return sizes
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +209,22 @@ def run_once(
     return updated
 
 
+def sample_baseline_prices(db: Database, fetcher: PriceFetcherProtocol) -> int:
+    """Snapshot the current price for every instrument that has ever been
+    price-tracked, regardless of whether a signal fired right now — this is
+    what makes the resulting price_samples rows a random-window baseline
+    instead of another signal-triggered measurement. Returns the number of
+    instruments sampled.
+    """
+    sampled = 0
+    for source, instrument in db.price_tracking.distinct_instruments():
+        price = fetcher.get_price(source, instrument)
+        if price is not None:
+            db.price_samples.insert(source, instrument, price)
+            sampled += 1
+    return sampled
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Sentinel post-signal price follow-through backfill"
@@ -190,7 +240,9 @@ def main():
 
     if args.once:
         updated = run_once(db, fetcher)
-        logger.info("Backfilled %d price column(s)", updated)
+        sampled = sample_baseline_prices(db, fetcher)
+        logger.info("Backfilled %d price column(s), sampled %d baseline price(s)",
+                    updated, sampled)
         db.close()
         return
 
@@ -198,8 +250,10 @@ def main():
     while True:
         try:
             updated = run_once(db, fetcher)
-            if updated:
-                logger.info("Backfilled %d price column(s)", updated)
+            sampled = sample_baseline_prices(db, fetcher)
+            if updated or sampled:
+                logger.info("Backfilled %d price column(s), sampled %d baseline price(s)",
+                            updated, sampled)
         except Exception as exc:
             logger.error("Backfill pass failed: %s", exc)
         time_module.sleep(args.interval)

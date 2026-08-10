@@ -41,6 +41,8 @@ def mock_config():
     cfg.kalshi.thresholds.odds_move_pct_5min = 5.0
     cfg.kalshi.thresholds.volume_spike_multiplier = 3.0
     cfg.kalshi.thresholds.min_absolute_volume = 50
+    cfg.kalshi.thresholds.odds_move_pct_high = 20.0
+    cfg.kalshi.thresholds.volume_spike_multiplier_high = 10.0
     return cfg
 
 
@@ -361,8 +363,8 @@ class TestProcessMarket:
 # ---------------------------------------------------------------------------
 # Price follow-through tracking (plans/05-price-follow-through.md): HIGH
 # signals get a post_price_tracking row so price_followup.py can backfill
-# later horizons; MEDIUM signals (odds_move, volume_spike as currently
-# configured) do not.
+# later horizons; MEDIUM signals do not. odds_move/volume_spike are tiered —
+# a move/ratio past *_pct_high / *_multiplier_high is HIGH, otherwise MEDIUM.
 # ---------------------------------------------------------------------------
 
 class TestPriceTracking:
@@ -422,6 +424,44 @@ class TestPriceTracking:
             "SELECT * FROM post_price_tracking WHERE signal_id=?", (signal["id"],)
         )
         assert rows == []
+
+    def test_odds_move_high_priority_is_tracked(self, collector, mock_db):
+        ticker = SAMPLE_MARKET["ticker"]
+        collector.set_previous_price(ticker, 0.10)
+        moved_market = dict(SAMPLE_MARKET)
+        moved_market["last_price_dollars"] = "0.3500"  # +25pp, above the 20.0 HIGH bar
+
+        self._mock_trades(collector, [])
+        collector.process_market(moved_market)
+
+        signal = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "odds_move"
+        )
+        assert signal["priority"] == "HIGH"
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (signal["id"],)
+        )
+        assert len(rows) == 1
+        assert rows[0]["price_t0"] == pytest.approx(0.35)
+
+    def test_volume_spike_high_priority_is_tracked(self, collector, mock_db):
+        spiked = dict(SAMPLE_MARKET)
+        created_30d_ago = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        spiked["created_time"] = created_30d_ago
+        spiked["volume_fp"] = "3000.00"  # lifetime = 3000, daily avg = 100
+        spiked["volume_24h_fp"] = "1200.00"  # 12x daily avg, above the 10.0 HIGH bar
+
+        self._mock_trades(collector, [])
+        collector.process_market(spiked)
+
+        signal = next(
+            s for s in mock_db.get_recent_signals() if s["signal_type"] == "volume_spike"
+        )
+        assert signal["priority"] == "HIGH"
+        rows = mock_db.execute_fetchall(
+            "SELECT * FROM post_price_tracking WHERE signal_id=?", (signal["id"],)
+        )
+        assert len(rows) == 1
 
     def test_zero_price_is_not_tracked(self, collector, mock_db):
         """A zero/unparseable price shouldn't produce a bogus price_t0=0 row."""

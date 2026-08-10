@@ -67,6 +67,8 @@ class KalshiThresholds:
     odds_move_pct_5min: float
     volume_spike_multiplier: float
     min_absolute_volume: float
+    odds_move_pct_high: float
+    volume_spike_multiplier_high: float
 
 
 @dataclass
@@ -246,6 +248,10 @@ def _parse_kalshi(data: dict) -> KalshiConfig:
         odds_move_pct_5min=float(thresholds_raw.get("odds_move_pct_5min", 5.0)),
         volume_spike_multiplier=float(thresholds_raw.get("volume_spike_multiplier", 3.0)),
         min_absolute_volume=float(thresholds_raw.get("min_absolute_volume", 50)),
+        odds_move_pct_high=float(thresholds_raw.get("odds_move_pct_high", 15.0)),
+        volume_spike_multiplier_high=float(
+            thresholds_raw.get("volume_spike_multiplier_high", 50.0)
+        ),
     )
     return KalshiConfig(
         poll_interval_seconds=int(data.get("poll_interval_seconds", 30)),

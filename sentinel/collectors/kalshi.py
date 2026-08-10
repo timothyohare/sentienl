@@ -286,12 +286,15 @@ class KalshiCollector:
         if _is_odds_move(previous_yes, current_yes, self._thresholds.odds_move_pct_5min):
             assert previous_yes is not None  # _is_odds_move returns False when previous_yes is None
             change_pct = (current_yes - previous_yes) * 100
-            logger.info("Odds move detected on %s: %.1f%% -> %.1f%%",
-                        ticker, previous_yes * 100, current_yes * 100)
+            priority = (
+                "HIGH" if abs(change_pct) >= self._thresholds.odds_move_pct_high else "MEDIUM"
+            )
+            logger.info("Odds move detected on %s: %.1f%% -> %.1f%% (priority=%s)",
+                        ticker, previous_yes * 100, current_yes * 100, priority)
             signal_id = self.db.insert_signal(
                 source="kalshi",
                 signal_type="odds_move",
-                priority="MEDIUM",
+                priority=priority,
                 payload={
                     "ticker": ticker,
                     "market_title": market_title,
@@ -304,7 +307,7 @@ class KalshiCollector:
                     f"(YES: {previous_yes*100:.0f}% -> {current_yes*100:.0f}%)"
                 ),
             )
-            self._maybe_track_price(signal_id, "MEDIUM", ticker, current_yes)
+            self._maybe_track_price(signal_id, priority, ticker, current_yes)
         self.set_previous_price(ticker, current_yes)
 
     def _check_volume_spike(self, market: dict[str, Any]) -> None:
@@ -366,11 +369,16 @@ class KalshiCollector:
                 except (ValueError, IndexError):
                     pass  # corrupted state, re-fire
 
-            logger.info("Volume spike on %s: %.1fx baseline", ticker, spike["ratio"])
+            priority = (
+                "HIGH" if spike["ratio"] >= self._thresholds.volume_spike_multiplier_high
+                else "MEDIUM"
+            )
+            logger.info("Volume spike on %s: %.1fx baseline (priority=%s)",
+                        ticker, spike["ratio"], priority)
             signal_id = self.db.insert_signal(
                 source="kalshi",
                 signal_type="volume_spike",
-                priority="MEDIUM",
+                priority=priority,
                 payload={
                     "ticker": ticker,
                     "market_title": market_title,
@@ -383,7 +391,7 @@ class KalshiCollector:
                     f"(24h: {volume_24h:,.0f}, avg: {daily_avg:,.0f})"
                 ),
             )
-            self._maybe_track_price(signal_id, "MEDIUM", ticker, current_price)
+            self._maybe_track_price(signal_id, priority, ticker, current_price)
             self.db.state.set(state_key, f"{spike['ratio']}|{now_ts}")
 
     def process_market(self, market: dict[str, Any]) -> None:

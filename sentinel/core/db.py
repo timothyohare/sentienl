@@ -6,6 +6,8 @@ Provides a Database class with sub-accessors for each logical table:
   - db.state — StateStore (key/value persistence)
   - db.wallet_cache — WalletCache (Polygon wallet age cache)
   - db.price_tracking — PostPriceTracking (post-signal price history)
+  - db.price_samples — PriceSamples (continuous price history, for the
+    random-window signal-to-noise baseline)
 
 WAL mode and synchronous=NORMAL are set on every connection open.
 """
@@ -63,6 +65,17 @@ CREATE TABLE IF NOT EXISTS post_price_tracking (
     created_at  TEXT    NOT NULL,
     PRIMARY KEY (signal_id, instrument)
 );
+
+CREATE TABLE IF NOT EXISTS price_samples (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    source      TEXT    NOT NULL,
+    instrument  TEXT    NOT NULL,
+    price       REAL    NOT NULL,
+    sampled_at  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_samples_source_instrument
+    ON price_samples (source, instrument);
 """
 
 _VALID_PRICE_COLUMNS = {"price_t0", "price_t15", "price_t60", "price_t240", "price_t1440"}
@@ -178,6 +191,46 @@ class PostPriceTracking:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def distinct_instruments(self) -> list[tuple[str, str]]:
+        """Distinct (source, instrument) pairs that have ever been price-tracked —
+        the universe of instruments the random-window baseline sampler covers."""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT DISTINCT source, instrument FROM post_price_tracking"
+        ).fetchall()
+        return [(r["source"], r["instrument"]) for r in rows]
+
+
+class PriceSamples:
+    """Continuous price history per instrument, independent of any signal —
+    used to build a true random-window baseline (plan 05's originally
+    deferred scope) instead of comparing signals only against each other."""
+
+    def __init__(self, conn_factory):
+        self._conn = conn_factory
+
+    def insert(
+        self, source: str, instrument: str, price: float, sampled_at: str | None = None
+    ) -> None:
+        """Record a price observation. Not tied to any signal."""
+        conn = self._conn()
+        conn.execute(
+            "INSERT INTO price_samples (source, instrument, price, sampled_at) "
+            "VALUES (?, ?, ?, ?)",
+            (source, instrument, price, sampled_at or _utcnow()),
+        )
+        conn.commit()
+
+    def get_samples(self, source: str, instrument: str) -> list[dict[str, Any]]:
+        """Return all samples for (source, instrument), oldest first."""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT price, sampled_at FROM price_samples "
+            "WHERE source=? AND instrument=? ORDER BY sampled_at",
+            (source, instrument),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
 
 class Database:
     """
@@ -198,6 +251,7 @@ class Database:
         self.state = StateStore(self._get_conn)
         self.wallet_cache = WalletCache(self._get_conn)
         self.price_tracking = PostPriceTracking(self._get_conn)
+        self.price_samples = PriceSamples(self._get_conn)
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
