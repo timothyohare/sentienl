@@ -87,7 +87,7 @@ _Completed items moved to the Completed section above._
 
 ### Validate Signal Logic Against History
 
-- [ ] **Run historical backtest on known events** — using yfinance *historical* data, check whether the futures volume spike algorithm would have fired on: (1) Soleimani assassination Jan 3 2020 (WTI +4%), (2) Russia-Ukraine invasion Feb 24 2022 (Brent +8%), (3) Gaza Oct 7 2023 (oil +4%). If not, thresholds need revisiting before going live.
+- [x] **Run historical backtest on known events (2026-08-10, partial)** — `sentinel/scripts/historical_backtest.py` confirms all three events were real, large single-day moves (Soleimani +3.06%, Gaza +4.34%, Ukraine +2.31% — that last one notably below the reported Brent +8% headline, worth a second look). **But it cannot validate the volume-spike algorithm itself**: yfinance only serves 1-minute bars for the last 30 days, so events this old are only checkable at daily resolution, and daily-aggregated volume systematically dilutes any short 1-minute spike into the noise of a full trading day — none of the three cleared the daily-bar proxy's 3x/5x ratio, but that's expected regardless of what the real minute-level algorithm would have done, not evidence the thresholds are wrong. A real test needs historical minute-level bars (e.g. via the IB account already set up for the sibling `rotrade` project) — still open.
 
 ### ~~Add Kalshi as Second Prediction Market Source~~ (Done)
 
