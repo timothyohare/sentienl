@@ -69,7 +69,7 @@ _Updated 3 August 2026_
 
 ## Known Gaps (found during docs audit, 2026-08-03)
 
-- [ ] **Dashboard `/health` monitored-source list is stale** — `sentinel/dashboard/app.py`'s `health()` route still checks `"polymarket"` (always shows warn/err now that it's ACMA-blocked and unused) but doesn't check `"kalshi"` at all, despite Kalshi being the primary prediction-market source. Should swap one for the other.
+- [x] **Dashboard `/health` monitored-source list is stale** — fixed 2026-08-10: `health()`'s `sources` list now checks `"kalshi"` instead of `"polymarket"`.
 - [ ] **Price follow-through has no live data yet** — `signal_scorecard.py` needs at least a day of `price_followup.py` running to have a `t1440` sample worth reading. See `plans/05-price-follow-through.md`.
 - [ ] **Interactive Brokers as a futures/Kalshi price source** — an IB account already exists for the sibling `rotrade` project; swapping it in for yfinance would remove the ~10min delay that most affects the price-follow-through `t15` horizon. Not started.
 

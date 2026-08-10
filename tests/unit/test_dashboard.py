@@ -194,6 +194,15 @@ class TestDashboardRoutes:
         data = json.loads(response.data)
         assert "status" in data
 
+    def test_health_monitors_kalshi_not_polymarket(self, client):
+        """Kalshi replaced Polymarket as the prediction-market source
+        (ACMA block) — /health's monitored-source list should reflect the
+        collector that's actually running, not the deprecated one."""
+        response = client.get("/health?format=json")
+        sources = {c["source"] for c in json.loads(response.data)["collectors"]}
+        assert "kalshi" in sources
+        assert "polymarket" not in sources
+
     def test_signals_page_shows_signals(self, client, mock_db):
         mock_db.insert_signal(
             "truth_social", "new_post", "CRITICAL",

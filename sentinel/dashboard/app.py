@@ -392,7 +392,7 @@ def create_app(db, config_path: str | None = None) -> Flask:
     def health():
         format_json = request.args.get("format") == "json"
         sources = [
-            "truth_social", "polymarket", "futures_oil", "futures_sp500",
+            "truth_social", "kalshi", "futures_oil", "futures_sp500",
             "futures_brent", "futures_natgas", "futures_gold", "futures_dxy",
             "correlation_detector",
         ]
