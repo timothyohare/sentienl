@@ -71,7 +71,7 @@ _Updated 3 August 2026_
 
 - [x] **Dashboard `/health` monitored-source list is stale** — fixed 2026-08-10: `health()`'s `sources` list now checks `"kalshi"` instead of `"polymarket"`.
 - [ ] **Price follow-through has no live data yet** — `signal_scorecard.py` needs at least a day of `price_followup.py` running to have a `t1440` sample worth reading. See `plans/05-price-follow-through.md`.
-- [ ] **Interactive Brokers as a futures/Kalshi price source** — an IB account already exists for the sibling `rotrade` project; swapping it in for yfinance would remove the ~10min delay that most affects the price-follow-through `t15` horizon. Not started.
+- [x] **Interactive Brokers as a futures price source** — `ibkr_futures_client.py` added, wired ahead of yfinance in `futures_volume.py` and `price_followup.py`'s `FuturesPriceFetcher`, gated behind `futures.ib_enabled` (default `False`). Falls back to yfinance on any failure. Requires IB Gateway running and logged in — manual daily step, no auto-relogin. Kalshi price source is unaffected (already real-time via the public API, no delay to fix).
 
 ---
 

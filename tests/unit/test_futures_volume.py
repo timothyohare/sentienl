@@ -33,6 +33,10 @@ def mock_config():
     cfg.futures.alpaca_api_key = ""
     cfg.futures.alpaca_api_secret = ""
     cfg.futures.alpaca_base_url = "https://data.alpaca.markets"
+    cfg.futures.ib_enabled = False
+    cfg.futures.ib_host = "127.0.0.1"
+    cfg.futures.ib_port = 4002
+    cfg.futures.ib_client_id_base = 400
     cfg.futures.instruments = [
         MagicMock(ticker="CL=F", name="WTI Oil", min_absolute_volume=500),
         MagicMock(ticker="ES=F", name="S&P 500", min_absolute_volume=200),
@@ -264,6 +268,45 @@ class TestFetchBarsYfinance:
     def test_fetch_bars_falls_back_to_yfinance_when_no_alpaca_key(self, collector):
         collector._alpaca_api_key = ""
         with patch.object(collector, "_fetch_yfinance", return_value=[]) as mock_yf:
+            collector.fetch_bars("CL=F")
+        mock_yf.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Data fetching (mocked IB Gateway) — real-time source, ahead of yfinance
+# ---------------------------------------------------------------------------
+
+class TestFetchBarsIbkr:
+    def test_ib_skipped_when_disabled(self, collector):
+        collector._alpaca_api_key = ""
+        collector._ib_enabled = False
+        with (
+            patch.object(collector, "_fetch_ibkr") as mock_ib,
+            patch.object(collector, "_fetch_yfinance", return_value=[]),
+        ):
+            collector.fetch_bars("CL=F")
+        mock_ib.assert_not_called()
+
+    def test_ib_tried_when_enabled_and_used_when_it_returns_bars(self, collector):
+        collector._alpaca_api_key = ""
+        collector._ib_enabled = True
+        mock_bars = [{"volume": 500, "close": 75.0, "open": 74.5}]
+        with (
+            patch.object(collector, "_fetch_ibkr", return_value=mock_bars) as mock_ib,
+            patch.object(collector, "_fetch_yfinance") as mock_yf,
+        ):
+            bars = collector.fetch_bars("CL=F")
+        mock_ib.assert_called_once()
+        mock_yf.assert_not_called()
+        assert bars == mock_bars
+
+    def test_falls_back_to_yfinance_when_ib_returns_empty(self, collector):
+        collector._alpaca_api_key = ""
+        collector._ib_enabled = True
+        with (
+            patch.object(collector, "_fetch_ibkr", return_value=[]),
+            patch.object(collector, "_fetch_yfinance", return_value=[]) as mock_yf,
+        ):
             collector.fetch_bars("CL=F")
         mock_yf.assert_called_once()
 

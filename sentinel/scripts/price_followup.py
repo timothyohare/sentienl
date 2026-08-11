@@ -18,6 +18,12 @@ signal fired this run. That continuous, non-signal-triggered history is
 what `signal_scorecard.py` uses to build a true random-window baseline
 (plan 05's originally deferred scope), instead of comparing signal types
 only against each other.
+
+`FuturesPriceFetcher` tries IB Gateway first when `futures.ib_enabled` is
+true (real-time, no delay), falling back to yfinance's ~10min-delayed bars
+— this is the actual fix for the t15 horizon's latency. See CLAUDE.md's
+Futures collector section for the operational caveat (Gateway needs to be
+running and logged in — a manual daily step).
 """
 
 import argparse
@@ -33,6 +39,7 @@ import httpx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from sentinel.collectors.kalshi import KALSHI_API_BASE
+from sentinel.core.config import load_config
 from sentinel.core.db import Database
 
 logging.basicConfig(
@@ -150,11 +157,29 @@ class KalshiPriceFetcher:
 
 
 class FuturesPriceFetcher:
-    """Fetches the latest 1-min close price for a yfinance futures ticker."""
+    """Fetches the latest futures close price. Tries IB Gateway first (if
+    enabled — real-time, no delay), falling back to yfinance's ~10min-delayed
+    1-min bars. This is the actual fix for the t15 horizon's latency, per
+    TODO.md's "Interactive Brokers as a futures price source"."""
 
-    def get_price(self, source: str, instrument: str) -> float | None:
-        if not source.startswith("futures_"):
-            return None
+    def __init__(
+        self,
+        ib_enabled: bool = False,
+        ib_host: str = "127.0.0.1",
+        ib_port: int = 4002,
+        ib_client_id_base: int = 400,
+    ):
+        self._ib_enabled = ib_enabled
+        self._ib_host = ib_host
+        self._ib_port = ib_port
+        self._ib_client_id_base = ib_client_id_base
+
+    def _get_price_ibkr(self, instrument: str) -> float | None:
+        from sentinel.collectors.ibkr_futures_client import fetch_latest_price
+        client_id = self._ib_client_id_base + hash(instrument) % 1000
+        return fetch_latest_price(instrument, self._ib_host, self._ib_port, client_id)
+
+    def _get_price_yfinance(self, instrument: str) -> float | None:
         try:
             import yfinance as yf
             df = yf.Ticker(instrument).history(period="1d", interval="1m")
@@ -166,6 +191,17 @@ class FuturesPriceFetcher:
         except Exception as exc:
             logger.error("yfinance fetch failed for %s: %s", instrument, exc)
             return None
+
+    def get_price(self, source: str, instrument: str) -> float | None:
+        if not source.startswith("futures_"):
+            return None
+        if self._ib_enabled:
+            price = self._get_price_ibkr(instrument)
+            if price is not None:
+                return price
+            logger.info("IB Gateway returned no price for %s — falling back to yfinance",
+                        instrument)
+        return self._get_price_yfinance(instrument)
 
 
 class CompositePriceFetcher:
@@ -230,13 +266,22 @@ def main():
         description="Sentinel post-signal price follow-through backfill"
     )
     parser.add_argument("--db", default=os.environ.get("SENTINEL_DB", "sentinel.db"))
+    parser.add_argument("--config", default=os.environ.get("SENTINEL_CONFIG", "config.yaml"))
     parser.add_argument("--once", action="store_true", help="Run a single pass and exit")
     parser.add_argument("--interval", type=int, default=POLL_INTERVAL_SECONDS)
     args = parser.parse_args()
 
+    cfg = load_config(args.config)
+
     db = Database(args.db)
     db.init()
-    fetcher = CompositePriceFetcher([KalshiPriceFetcher(), FuturesPriceFetcher()])
+    futures_fetcher = FuturesPriceFetcher(
+        ib_enabled=cfg.futures.ib_enabled,
+        ib_host=cfg.futures.ib_host,
+        ib_port=cfg.futures.ib_port,
+        ib_client_id_base=cfg.futures.ib_client_id_base,
+    )
+    fetcher = CompositePriceFetcher([KalshiPriceFetcher(), futures_fetcher])
 
     if args.once:
         updated = run_once(db, fetcher)

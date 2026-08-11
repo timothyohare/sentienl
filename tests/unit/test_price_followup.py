@@ -6,12 +6,14 @@ truth_social.py's TruthSocialClientProtocol) — no live network in tests.
 """
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
 from sentinel.core.db import Database
 from sentinel.scripts.price_followup import (
     CompositePriceFetcher,
+    FuturesPriceFetcher,
     due_updates,
     group_by_instrument,
     random_window_effect_sizes,
@@ -305,6 +307,49 @@ class TestRunOnce:
             "SELECT price_t15 FROM post_price_tracking WHERE signal_id=?", (signal_id,)
         )
         assert rows[0]["price_t15"] is None
+
+
+# ---------------------------------------------------------------------------
+# FuturesPriceFetcher — IB Gateway (real-time) ahead of yfinance (delayed)
+# ---------------------------------------------------------------------------
+
+class TestFuturesPriceFetcher:
+    def test_ignores_non_futures_sources(self):
+        fetcher = FuturesPriceFetcher(ib_enabled=True)
+        with patch.object(fetcher, "_get_price_ibkr") as mock_ib:
+            assert fetcher.get_price("kalshi", "T1") is None
+        mock_ib.assert_not_called()
+
+    def test_ib_skipped_when_disabled(self):
+        fetcher = FuturesPriceFetcher(ib_enabled=False)
+        with (
+            patch.object(fetcher, "_get_price_ibkr") as mock_ib,
+            patch.object(fetcher, "_get_price_yfinance", return_value=75.0),
+        ):
+            price = fetcher.get_price("futures_oil", "CL=F")
+        mock_ib.assert_not_called()
+        assert price == 75.0
+
+    def test_ib_used_when_enabled_and_it_returns_a_price(self):
+        fetcher = FuturesPriceFetcher(ib_enabled=True)
+        with (
+            patch.object(fetcher, "_get_price_ibkr", return_value=76.5) as mock_ib,
+            patch.object(fetcher, "_get_price_yfinance") as mock_yf,
+        ):
+            price = fetcher.get_price("futures_oil", "CL=F")
+        mock_ib.assert_called_once()
+        mock_yf.assert_not_called()
+        assert price == 76.5
+
+    def test_falls_back_to_yfinance_when_ib_returns_none(self):
+        fetcher = FuturesPriceFetcher(ib_enabled=True)
+        with (
+            patch.object(fetcher, "_get_price_ibkr", return_value=None),
+            patch.object(fetcher, "_get_price_yfinance", return_value=75.0) as mock_yf,
+        ):
+            price = fetcher.get_price("futures_oil", "CL=F")
+        mock_yf.assert_called_once()
+        assert price == 75.0
 
 
 # ---------------------------------------------------------------------------

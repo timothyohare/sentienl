@@ -136,6 +136,10 @@ class FuturesConfig:
     active_window_utc: TimeWindow
     suppress_volume_alerts_on_roll_dates: bool
     roll_dates: list[RollDate]
+    ib_enabled: bool = False
+    ib_host: str = "127.0.0.1"
+    ib_port: int = 4002
+    ib_client_id_base: int = 400
 
 
 @dataclass
@@ -324,6 +328,10 @@ def _parse_futures(data: dict) -> FuturesConfig:
             data.get("suppress_volume_alerts_on_roll_dates", True)
         ),
         roll_dates=roll_dates,
+        ib_enabled=bool(data.get("ib_enabled", False)),
+        ib_host=str(data.get("ib_host", "127.0.0.1")),
+        ib_port=int(data.get("ib_port", 4002)),
+        ib_client_id_base=int(data.get("ib_client_id_base", 400)),
     )
 
 

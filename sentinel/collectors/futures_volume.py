@@ -6,7 +6,13 @@ HIGH/MEDIUM signals when volume exceeds the rolling average by a configured
 multiplier.
 
 Data source:
-  - yfinance is the sole active source (1-min bars, ~10 min delay for futures).
+  - yfinance is the default/fallback source (1-min bars, ~10 min delay for
+    futures).
+  - IB Gateway (`ibkr_futures_client.py`) is used ahead of yfinance when
+    `futures.ib_enabled` is true — real-time 1-min bars, no delay. Requires
+    Gateway running and logged in (manual daily step); silently falls back
+    to yfinance whenever it isn't. See CLAUDE.md's Futures collector
+    section for the operational caveat.
   - Alpaca does NOT support futures (its data API rejects futures symbols).
     The Alpaca config/code remains inert in this collector for a potential
     stock/ETF monitoring pivot — it is not used for futures.
@@ -140,6 +146,10 @@ class FuturesVolumeCollector:
         self._alpaca_api_key = fut_cfg.alpaca_api_key
         self._alpaca_api_secret = fut_cfg.alpaca_api_secret
         self._alpaca_base_url = fut_cfg.alpaca_base_url
+        self._ib_enabled = fut_cfg.ib_enabled
+        self._ib_host = fut_cfg.ib_host
+        self._ib_port = fut_cfg.ib_port
+        self._ib_client_id_base = fut_cfg.ib_client_id_base
         # In-memory volume history keyed by ticker
         self._volume_history: dict[str, list[float | None]] = defaultdict(list)
 
@@ -242,15 +252,33 @@ class FuturesVolumeCollector:
             logger.error("yfinance fetch failed for %s: %s", ticker, exc)
             return []
 
+    def _fetch_ibkr(self, ticker: str) -> list[dict[str, Any]]:
+        """
+        Fetch 1-minute bars from IB Gateway (real-time, no ~10min delay).
+        Requires Gateway running and logged in — see CLAUDE.md's Futures
+        collector section. Returns empty list on any failure, same
+        contract as _fetch_alpaca/_fetch_yfinance.
+        """
+        from sentinel.collectors.ibkr_futures_client import fetch_bars as ib_fetch_bars
+        client_id = self._ib_client_id_base + hash(ticker) % 1000
+        return ib_fetch_bars(ticker, self._ib_host, self._ib_port, client_id)
+
     def fetch_bars(self, ticker: str) -> list[dict[str, Any]]:
         """
-        Fetch 1-minute bars for a ticker. Tries Alpaca first, falls back to yfinance.
+        Fetch 1-minute bars for a ticker. Tries Alpaca first (dead in
+        practice — Alpaca doesn't support futures), then IB Gateway (if
+        enabled), falling back to yfinance last.
         """
         if self._alpaca_api_key:
             bars = self._fetch_alpaca(ticker)
             if bars:
                 return bars
             logger.info("Alpaca returned no data for %s — falling back to yfinance", ticker)
+        if self._ib_enabled:
+            bars = self._fetch_ibkr(ticker)
+            if bars:
+                return bars
+            logger.info("IB Gateway returned no data for %s — falling back to yfinance", ticker)
         return self._fetch_yfinance(ticker)
 
     # ------------------------------------------------------------------
