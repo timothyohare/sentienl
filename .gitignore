@@ -17,3 +17,4 @@ htmlcov/
 mutants/
 *.log
 .env
+.env.bak*
