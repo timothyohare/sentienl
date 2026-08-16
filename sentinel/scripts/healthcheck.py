@@ -6,6 +6,14 @@ Checks that all collectors' systemd units are actually running, and that
 each has filed recent signals, then optionally sends a heartbeat ntfy
 notification. Designed for cron scheduling every 60 minutes.
 
+The health check itself still runs every cron cycle (hourly) so a dead
+collector is still caught within ~1hr, same as before. Only the *ntfy
+message* is throttled: a routine "all healthy" heartbeat is sent at most
+twice a day (`--heartbeat-hours`, default 8am/8pm AEST), while a DOWN
+status is always sent immediately regardless of schedule — the throttle
+exists to cut noise on the happy path, not to delay outage detection
+(see the 2026-08-11 Truth Social incident below).
+
 Two independent checks per source, combined into one status:
   - Unit liveness (`systemctl --user is-active <unit>`) — authoritative.
     A unit that isn't active is DOWN regardless of signal history. This is
@@ -58,6 +66,9 @@ MONITORED_UNITS: dict[str, str] = {
 }
 
 STALE_THRESHOLD_MINUTES = 30  # a live unit with no signals in this long is QUIET
+
+AEST_OFFSET = timedelta(hours=10)  # fixed offset, matches dashboard/app.py
+HEARTBEAT_HOURS_AEST = (8, 20)  # routine "all healthy" heartbeat sent only at these hours
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +140,15 @@ def check_health(
     return results
 
 
+def should_send_heartbeat(any_down: bool, heartbeat_hours: set[int], now_utc: datetime) -> bool:
+    """A DOWN status always sends immediately; otherwise the routine
+    'all healthy' heartbeat only sends during one of `heartbeat_hours`
+    (AEST, matching the dashboard's display timezone)."""
+    if any_down:
+        return True
+    return (now_utc + AEST_OFFSET).hour in heartbeat_hours
+
+
 def send_heartbeat(config, message: str) -> None:
     """Send a heartbeat notification via ntfy."""
     try:
@@ -156,6 +176,12 @@ def main():
     parser.add_argument("--heartbeat", action="store_true",
                         help="Send a heartbeat ntfy notification")
     parser.add_argument("--stale-minutes", type=int, default=STALE_THRESHOLD_MINUTES)
+    parser.add_argument(
+        "--heartbeat-hours", default=",".join(str(h) for h in HEARTBEAT_HOURS_AEST),
+        help="Comma-separated AEST hours (0-23) at which the routine 'all "
+             "healthy' heartbeat is sent, e.g. '8,20'. A DOWN status is "
+             "always sent immediately regardless of this schedule.",
+    )
     args = parser.parse_args()
 
     # Load DB
@@ -178,13 +204,20 @@ def main():
         )
 
     if args.heartbeat and os.path.exists(args.config):
-        try:
-            config = load_config(args.config)
-            lines = [f"{source}: {r['status']}" for source, r in results.items()]
-            message = "Sentinel alive\n" + "\n".join(lines)
-            send_heartbeat(config, message)
-        except Exception as exc:
-            logger.error("Heartbeat failed: %s", exc)
+        heartbeat_hours = {int(h) for h in args.heartbeat_hours.split(",") if h.strip()}
+        if should_send_heartbeat(not all_healthy, heartbeat_hours, datetime.now(UTC)):
+            try:
+                config = load_config(args.config)
+                lines = [f"{source}: {r['status']}" for source, r in results.items()]
+                message = "Sentinel alive\n" + "\n".join(lines)
+                send_heartbeat(config, message)
+            except Exception as exc:
+                logger.error("Heartbeat failed: %s", exc)
+        else:
+            logger.info(
+                "Heartbeat suppressed (all healthy, outside %s AEST schedule)",
+                sorted(heartbeat_hours),
+            )
 
     db.close()
 

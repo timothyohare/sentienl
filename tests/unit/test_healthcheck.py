@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from sentinel.core.db import Database
-from sentinel.scripts.healthcheck import MONITORED_UNITS, check_health
+from sentinel.scripts.healthcheck import MONITORED_UNITS, check_health, should_send_heartbeat
 
 
 class FakeUnitChecker:
@@ -93,3 +93,23 @@ class TestCheckHealth:
         results = check_health(db, stale_threshold_minutes=30, unit_checker=checker)
 
         assert all(r["status"] == "DOWN" for r in results.values())
+
+
+class TestShouldSendHeartbeat:
+    def test_down_always_sends_regardless_of_hour(self):
+        # 03:00 UTC = 13:00 AEST, not in {8, 20}
+        now_utc = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+
+        assert should_send_heartbeat(True, {8, 20}, now_utc) is True
+
+    def test_healthy_sends_only_during_scheduled_aest_hour(self):
+        # 22:00 UTC = 08:00 AEST next day — inside the schedule
+        now_utc = datetime(2026, 8, 11, 22, 0, tzinfo=UTC)
+
+        assert should_send_heartbeat(False, {8, 20}, now_utc) is True
+
+    def test_healthy_suppressed_outside_scheduled_aest_hour(self):
+        # 03:00 UTC = 13:00 AEST — outside the schedule
+        now_utc = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+
+        assert should_send_heartbeat(False, {8, 20}, now_utc) is False
