@@ -85,42 +85,51 @@ def compute_baseline(sizes: dict[tuple[str, str, str], list[float]]) -> dict[str
 
 def compute_random_baseline(
     db: Database, instruments: set[tuple[str, str]], min_samples: int = 5
-) -> dict[str, float]:
+) -> dict[tuple[str, str], float]:
     """True random-window baseline: pooled median effect size from
     `price_samples` pairs (see `price_followup.random_window_effect_sizes`),
-    across every tracked (source, instrument), per horizon. A horizon is
-    included only once it has at least `min_samples` pooled data points —
-    otherwise `build_scorecard()` falls back to the pooled-proxy baseline
-    for that horizon."""
-    by_horizon: dict[str, list[float]] = defaultdict(list)
+    partitioned by (source, horizon) — pooling instruments of the *same*
+    source (e.g. multiple Kalshi tickers) is fine, but pooling across
+    different sources is not: Kalshi's mostly-flat thin markets vastly
+    outnumber futures' sample pairs and drag a globally-pooled median
+    toward zero, understating what "normal" movement looks like for a
+    liquid futures instrument. A (source, horizon) is included only once
+    it has at least `min_samples` pooled data points — otherwise
+    `build_scorecard()` falls back to the pooled-proxy baseline for that
+    (source, horizon)."""
+    by_source_horizon: dict[tuple[str, str], list[float]] = defaultdict(list)
     for source, instrument in instruments:
         samples = db.price_samples.get_samples(source, instrument)
         for column, horizon_minutes in HORIZON_MINUTES:
-            by_horizon[column].extend(random_window_effect_sizes(samples, horizon_minutes))
+            by_source_horizon[(source, column)].extend(
+                random_window_effect_sizes(samples, horizon_minutes)
+            )
     return {
-        horizon: median(values)
-        for horizon, values in by_horizon.items()
+        key: median(values)
+        for key, values in by_source_horizon.items()
         if len(values) >= min_samples
     }
 
 
 def build_scorecard(
-    rows: list[dict], random_baseline: dict[str, float] | None = None
+    rows: list[dict], random_baseline: dict[tuple[str, str], float] | None = None
 ) -> list[dict]:
     """Per (source, signal_type, horizon): sample size, median effect size,
     and whether it beats the baseline for that horizon. Prefers the true
-    random-window baseline (see compute_random_baseline) where enough
-    price_samples data exists; falls back to the pooled-proxy baseline
-    (median across other tracked signal types — see module docstring) for
-    any horizon without it yet."""
+    random-window baseline (see compute_random_baseline), keyed by
+    (source, horizon) so a group is only ever compared against its own
+    source's noise floor, where enough price_samples data exists; falls
+    back to the pooled-proxy baseline (median across other tracked signal
+    types — see module docstring) for any (source, horizon) without it
+    yet."""
     random_baseline = random_baseline or {}
     sizes = compute_effect_sizes(rows)
     proxy_baseline = compute_baseline(sizes)
 
     scorecard = []
     for (source, signal_type, horizon), values in sorted(sizes.items()):
-        if horizon in random_baseline:
-            baseline_value = random_baseline[horizon]
+        if (source, horizon) in random_baseline:
+            baseline_value = random_baseline[(source, horizon)]
             baseline_source = "random_window"
         else:
             baseline_value = proxy_baseline.get(horizon, 0.0)

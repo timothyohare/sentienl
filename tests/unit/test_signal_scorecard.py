@@ -157,7 +157,7 @@ class TestBuildScorecard:
              "price_t0": 0.30, "price_t15": 0.45, "price_t60": None,
              "price_t240": None, "price_t1440": None},  # 50% move
         ]
-        scorecard = build_scorecard(rows, random_baseline={"price_t15": 0.20})
+        scorecard = build_scorecard(rows, random_baseline={("kalshi", "price_t15"): 0.20})
         entry = scorecard[0]
         assert entry["baseline_source"] == "random_window"
         assert entry["baseline_effect_size"] == pytest.approx(0.20)
@@ -174,10 +174,38 @@ class TestBuildScorecard:
         ]
         # random_baseline covers price_t60, not price_t15 — price_t15 entries
         # must still fall back to the pooled proxy.
-        scorecard = build_scorecard(rows, random_baseline={"price_t60": 0.01})
+        scorecard = build_scorecard(
+            rows, random_baseline={("kalshi", "price_t60"): 0.01}
+        )
         entries = [e for e in scorecard if e["horizon"] == "price_t15"]
         assert entries
         assert all(e["baseline_source"] == "pooled_proxy" for e in entries)
+
+    def test_random_baseline_is_isolated_per_source(self):
+        # kalshi and futures_oil each get their own random-window baseline
+        # at the same horizon — one group beating baseline must not depend
+        # on the other source's baseline value (the pooling bug this
+        # partitioning fixes: a thin/flat source dragging a liquid source's
+        # comparison point toward zero).
+        rows = [
+            {"source": "kalshi", "signal_type": "large_bet",
+             "price_t0": 100.0, "price_t15": 100.5, "price_t60": None,
+             "price_t240": None, "price_t1440": None},  # 0.5% move
+            {"source": "futures_oil", "signal_type": "volume_spike",
+             "price_t0": 100.0, "price_t15": 100.5, "price_t60": None,
+             "price_t240": None, "price_t1440": None},  # 0.5% move
+        ]
+        random_baseline = {
+            ("kalshi", "price_t15"): 0.0,     # kalshi mostly flat -> beats it
+            ("futures_oil", "price_t15"): 0.01,  # futures moves more normally -> does not beat it
+        }
+        scorecard = build_scorecard(rows, random_baseline=random_baseline)
+        kalshi_entry = next(e for e in scorecard if e["source"] == "kalshi")
+        futures_entry = next(e for e in scorecard if e["source"] == "futures_oil")
+        assert kalshi_entry["baseline_effect_size"] == pytest.approx(0.0)
+        assert kalshi_entry["beats_baseline"] is True
+        assert futures_entry["baseline_effect_size"] == pytest.approx(0.01)
+        assert futures_entry["beats_baseline"] is False
 
 
 class TestComputeRandomBaseline:
@@ -192,7 +220,7 @@ class TestComputeRandomBaseline:
         tmp_db.price_samples.insert("kalshi", "T1", 102.0, sampled_at=_ts(30))
 
         baseline = compute_random_baseline(tmp_db, {("kalshi", "T1")})
-        assert "price_t15" not in baseline
+        assert ("kalshi", "price_t15") not in baseline
 
     def test_includes_horizon_once_min_samples_reached(self, tmp_db):
         # 6 samples, 15min apart -> 5 consecutive pairs at price_t15.
@@ -201,16 +229,33 @@ class TestComputeRandomBaseline:
             tmp_db.price_samples.insert("kalshi", "T1", price, sampled_at=_ts(i * 15))
 
         baseline = compute_random_baseline(tmp_db, {("kalshi", "T1")}, min_samples=5)
-        assert "price_t15" in baseline
-        assert baseline["price_t15"] > 0
+        assert ("kalshi", "price_t15") in baseline
+        assert baseline[("kalshi", "price_t15")] > 0
 
-    def test_pools_across_multiple_instruments(self, tmp_db):
-        # 3 pairs from each of two instruments = 6 pooled pairs, clears
-        # the default min_samples=5 even though neither instrument alone does.
+    def test_pools_across_multiple_instruments_of_the_same_source(self, tmp_db):
+        # 3 pairs from each of two same-source instruments = 6 pooled pairs,
+        # clears the default min_samples=5 even though neither instrument
+        # alone does.
         for i, price in enumerate([100.0, 101.0, 102.0, 103.0]):
             tmp_db.price_samples.insert("kalshi", "T1", price, sampled_at=_ts(i * 15))
         for i, price in enumerate([50.0, 51.0, 52.0, 53.0]):
             tmp_db.price_samples.insert("kalshi", "T2", price, sampled_at=_ts(i * 15))
 
         baseline = compute_random_baseline(tmp_db, {("kalshi", "T1"), ("kalshi", "T2")})
-        assert "price_t15" in baseline
+        assert ("kalshi", "price_t15") in baseline
+
+    def test_does_not_pool_across_different_sources(self, tmp_db):
+        # Regression test for the pooling bug: a source whose samples never
+        # move (e.g. a thin/flat Kalshi market) must not drag down the
+        # baseline computed for a different, unrelated source (e.g. a
+        # liquid futures instrument) at the same horizon.
+        for i in range(6):
+            tmp_db.price_samples.insert("kalshi", "T1", 100.0, sampled_at=_ts(i * 15))
+        for i, price in enumerate([100.0, 105.0, 110.0, 115.0, 120.0, 125.0]):
+            tmp_db.price_samples.insert("futures_oil", "CL=F", price, sampled_at=_ts(i * 15))
+
+        baseline = compute_random_baseline(
+            tmp_db, {("kalshi", "T1"), ("futures_oil", "CL=F")}, min_samples=5
+        )
+        assert baseline[("kalshi", "price_t15")] == pytest.approx(0.0)
+        assert baseline[("futures_oil", "price_t15")] > 0.0
