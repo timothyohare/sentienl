@@ -76,6 +76,26 @@ VALID_CONFIG_YAML = textwrap.dedent("""\
           tickers: ["CL=F"]
           note: "WTI April roll"
 
+    asx:
+      poll_interval_seconds: 60
+      instruments:
+        - ticker: "BHP.AX"
+          name: "BHP Group"
+          min_absolute_volume: 10000
+        - ticker: "CBA.AX"
+          name: "Commonwealth Bank"
+          min_absolute_volume: 3000
+      thresholds:
+        spike_multiplier: 3.0
+        spike_multiplier_quiet: 5.0
+        rolling_bars: 20
+        price_move_pct: 1.0
+        price_move_pct_high: 2.5
+      active_window_utc:
+        start: "23:45"
+        end: "06:15"
+      ib_enabled: false
+
     alerts:
       provider: ntfy
       ntfy_topic: sentinel-test
@@ -201,6 +221,26 @@ DISTINCT_CONFIG_YAML = textwrap.dedent("""\
         - date: "2026-05-01"
           tickers: ["XX=F"]
           note: "custom roll"
+
+    asx:
+      poll_interval_seconds: 45
+      instruments:
+        - ticker: "ZZZ.AX"
+          name: "Custom ASX Instrument"
+          min_absolute_volume: 4321
+      thresholds:
+        spike_multiplier: 2.5
+        spike_multiplier_quiet: 4.4
+        rolling_bars: 12
+        price_move_pct: 1.8
+        price_move_pct_high: 3.3
+      active_window_utc:
+        start: "22:30"
+        end: "07:00"
+      ib_enabled: true
+      ib_host: "10.0.0.5"
+      ib_port: 4003
+      ib_client_id_base: 6000
 
     alerts:
       provider: pushover
@@ -411,6 +451,50 @@ class TestFuturesConfig:
 
 
 # ---------------------------------------------------------------------------
+# Config — asx section
+# ---------------------------------------------------------------------------
+
+class TestAsxConfig:
+    def test_instruments_loaded(self, valid_config):
+        assert len(valid_config.asx.instruments) == 2
+
+    def test_instrument_ticker(self, valid_config):
+        tickers = [i.ticker for i in valid_config.asx.instruments]
+        assert "BHP.AX" in tickers
+
+    def test_instrument_min_absolute_volume(self, valid_config):
+        bhp = next(i for i in valid_config.asx.instruments if i.ticker == "BHP.AX")
+        assert bhp.min_absolute_volume == 10000
+
+    def test_spike_multiplier(self, valid_config):
+        assert valid_config.asx.thresholds.spike_multiplier == 3.0
+
+    def test_price_move_pct(self, valid_config):
+        assert valid_config.asx.thresholds.price_move_pct == 1.0
+
+    def test_price_move_pct_high(self, valid_config):
+        assert valid_config.asx.thresholds.price_move_pct_high == 2.5
+
+    def test_active_window_parsed(self, valid_config):
+        assert valid_config.asx.active_window_utc.start == time(23, 45)
+        assert valid_config.asx.active_window_utc.end == time(6, 15)
+
+    def test_ib_enabled(self, valid_config):
+        assert valid_config.asx.ib_enabled is False
+
+    def test_empty_instruments_does_not_raise(self, tmp_path):
+        # Unlike futures, asx.instruments is allowed to be empty (opt-in
+        # collector, not core MVP) — a config predating this section must
+        # keep loading unchanged.
+        cfg_data = yaml.safe_load(VALID_CONFIG_YAML)
+        cfg_data["asx"]["instruments"] = []
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(yaml.dump(cfg_data))
+        cfg = load_config(str(cfg_path))
+        assert cfg.asx.instruments == []
+
+
+# ---------------------------------------------------------------------------
 # Config — alerts section
 # ---------------------------------------------------------------------------
 
@@ -589,6 +673,24 @@ class TestAllDefaults:
         assert inst.ticker == "CL=F"
         assert inst.name == "CL=F"  # defaults to ticker when omitted
         assert inst.min_absolute_volume == 0
+
+    def test_asx_defaults(self, minimal_config):
+        # No "asx:" key at all in MINIMAL_CONFIG_YAML — every field here
+        # must come from _parse_asx's own defaults.
+        a = minimal_config.asx
+        assert a.poll_interval_seconds == 60
+        assert a.instruments == []
+        assert a.thresholds.spike_multiplier == 3.0
+        assert a.thresholds.spike_multiplier_quiet == 5.0
+        assert a.thresholds.rolling_bars == 20
+        assert a.thresholds.price_move_pct == 1.0
+        assert a.thresholds.price_move_pct_high == 2.5
+        assert a.active_window_utc.start == time(23, 45)
+        assert a.active_window_utc.end == time(6, 15)
+        assert a.ib_enabled is False
+        assert a.ib_host == "127.0.0.1"
+        assert a.ib_port == 4002
+        assert a.ib_client_id_base == 5000
 
     def test_alerts_defaults(self, minimal_config):
         a = minimal_config.alerts
@@ -850,6 +952,26 @@ class TestDistinctValues:
         assert rd.date == "2026-05-01"
         assert rd.tickers == ["XX=F"]
         assert rd.note == "custom roll"
+
+    def test_asx(self, distinct_config):
+        a = distinct_config.asx
+        assert a.poll_interval_seconds == 45
+        assert a.thresholds.spike_multiplier == 2.5
+        assert a.thresholds.spike_multiplier_quiet == 4.4
+        assert a.thresholds.rolling_bars == 12
+        assert a.thresholds.price_move_pct == 1.8
+        assert a.thresholds.price_move_pct_high == 3.3
+        assert a.active_window_utc.start == time(22, 30)
+        assert a.active_window_utc.end == time(7, 0)
+        assert a.ib_enabled is True
+        assert a.ib_host == "10.0.0.5"
+        assert a.ib_port == 4003
+        assert a.ib_client_id_base == 6000
+
+        inst = a.instruments[0]
+        assert inst.ticker == "ZZZ.AX"
+        assert inst.name == "Custom ASX Instrument"
+        assert inst.min_absolute_volume == 4321
 
     def test_alerts(self, distinct_config):
         a = distinct_config.alerts

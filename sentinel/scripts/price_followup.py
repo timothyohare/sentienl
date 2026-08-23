@@ -204,6 +204,54 @@ class FuturesPriceFetcher:
         return self._get_price_yfinance(instrument)
 
 
+class AsxPriceFetcher:
+    """Fetches the latest ASX equity close price. Tries IB Gateway first (if
+    enabled — unconfirmed market-data entitlement, see
+    ibkr_asx_client.py), falling back to yfinance's ~20min-delayed 1-min
+    bars."""
+
+    def __init__(
+        self,
+        ib_enabled: bool = False,
+        ib_host: str = "127.0.0.1",
+        ib_port: int = 4002,
+        ib_client_id_base: int = 5000,
+    ):
+        self._ib_enabled = ib_enabled
+        self._ib_host = ib_host
+        self._ib_port = ib_port
+        self._ib_client_id_base = ib_client_id_base
+
+    def _get_price_ibkr(self, instrument: str) -> float | None:
+        from sentinel.collectors.ibkr_asx_client import fetch_latest_price
+        client_id = self._ib_client_id_base + hash(instrument) % 1000
+        return fetch_latest_price(instrument, self._ib_host, self._ib_port, client_id)
+
+    def _get_price_yfinance(self, instrument: str) -> float | None:
+        try:
+            import yfinance as yf
+            df = yf.Ticker(instrument).history(period="1d", interval="1m")
+            if df is None or df.empty:
+                logger.warning("yfinance returned empty data for %s", instrument)
+                return None
+            price = float(df["Close"].iloc[-1])
+            return price or None
+        except Exception as exc:
+            logger.error("yfinance fetch failed for %s: %s", instrument, exc)
+            return None
+
+    def get_price(self, source: str, instrument: str) -> float | None:
+        if source != "asx":
+            return None
+        if self._ib_enabled:
+            price = self._get_price_ibkr(instrument)
+            if price is not None:
+                return price
+            logger.info("IB Gateway returned no price for %s — falling back to yfinance",
+                        instrument)
+        return self._get_price_yfinance(instrument)
+
+
 class CompositePriceFetcher:
     """Dispatches to the first fetcher that recognises the row's `source`."""
 
@@ -281,7 +329,13 @@ def main():
         ib_port=cfg.futures.ib_port,
         ib_client_id_base=cfg.futures.ib_client_id_base,
     )
-    fetcher = CompositePriceFetcher([KalshiPriceFetcher(), futures_fetcher])
+    asx_fetcher = AsxPriceFetcher(
+        ib_enabled=cfg.asx.ib_enabled,
+        ib_host=cfg.asx.ib_host,
+        ib_port=cfg.asx.ib_port,
+        ib_client_id_base=cfg.asx.ib_client_id_base,
+    )
+    fetcher = CompositePriceFetcher([KalshiPriceFetcher(), futures_fetcher, asx_fetcher])
 
     if args.once:
         updated = run_once(db, fetcher)

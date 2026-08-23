@@ -143,6 +143,34 @@ class FuturesConfig:
 
 
 @dataclass
+class AsxInstrument:
+    ticker: str
+    name: str
+    min_absolute_volume: int
+
+
+@dataclass
+class AsxThresholds:
+    spike_multiplier: float
+    spike_multiplier_quiet: float
+    rolling_bars: int
+    price_move_pct: float
+    price_move_pct_high: float
+
+
+@dataclass
+class AsxConfig:
+    poll_interval_seconds: int
+    instruments: list[AsxInstrument]
+    thresholds: AsxThresholds
+    active_window_utc: TimeWindow
+    ib_enabled: bool = False
+    ib_host: str = "127.0.0.1"
+    ib_port: int = 4002
+    ib_client_id_base: int = 5000
+
+
+@dataclass
 class AlertsConfig:
     provider: str
     ntfy_topic: str
@@ -172,6 +200,7 @@ class Config:
     polymarket: PolymarketConfig
     kalshi: KalshiConfig
     futures: FuturesConfig
+    asx: AsxConfig
     alerts: AlertsConfig
     database: DatabaseConfig
     dashboard: DashboardConfig
@@ -335,6 +364,44 @@ def _parse_futures(data: dict) -> FuturesConfig:
     )
 
 
+def _parse_asx(data: dict) -> AsxConfig:
+    sec = "asx"
+    instruments_raw = data.get("instruments", [])
+    # Unlike futures.instruments, an empty list is allowed here (not
+    # ConfigValidationError) — ASX tracking is opt-in, not core MVP, so a
+    # config predating this collector must keep loading unchanged.
+    instruments = [
+        AsxInstrument(
+            ticker=_require(inst, "ticker", f"{sec}.instruments[]"),
+            name=inst.get("name", inst.get("ticker", "")),
+            min_absolute_volume=int(inst.get("min_absolute_volume", 0)),
+        )
+        for inst in instruments_raw
+    ]
+    thresholds_raw = data.get("thresholds", {})
+    thresholds = AsxThresholds(
+        spike_multiplier=float(thresholds_raw.get("spike_multiplier", 3.0)),
+        spike_multiplier_quiet=float(thresholds_raw.get("spike_multiplier_quiet", 5.0)),
+        rolling_bars=int(thresholds_raw.get("rolling_bars", 20)),
+        price_move_pct=float(thresholds_raw.get("price_move_pct", 1.0)),
+        price_move_pct_high=float(thresholds_raw.get("price_move_pct_high", 2.5)),
+    )
+    # ASX trades 10:00-16:00 AEST (+pre-open auction) — approximated in UTC,
+    # same fixed-offset simplification the futures window already uses.
+    window_raw = data.get("active_window_utc", {"start": "23:45", "end": "06:15"})
+    active_window = _parse_time_window(window_raw, f"{sec}.active_window_utc")
+    return AsxConfig(
+        poll_interval_seconds=int(data.get("poll_interval_seconds", 60)),
+        instruments=instruments,
+        thresholds=thresholds,
+        active_window_utc=active_window,
+        ib_enabled=bool(data.get("ib_enabled", False)),
+        ib_host=str(data.get("ib_host", "127.0.0.1")),
+        ib_port=int(data.get("ib_port", 4002)),
+        ib_client_id_base=int(data.get("ib_client_id_base", 5000)),
+    )
+
+
 def _parse_alerts(data: dict) -> AlertsConfig:
     sec = "alerts"
     ntfy_topic = data.get("ntfy_topic")
@@ -413,6 +480,7 @@ def load_config(path: str) -> Config:
         polymarket=_parse_polymarket(raw.get("polymarket", {})),
         kalshi=_parse_kalshi(raw.get("kalshi", {})),
         futures=_parse_futures(raw.get("futures", {})),
+        asx=_parse_asx(raw.get("asx", {})),
         alerts=_parse_alerts(raw.get("alerts", {})),
         database=_parse_database(raw.get("database", {})),
         dashboard=_parse_dashboard(raw.get("dashboard", {})),

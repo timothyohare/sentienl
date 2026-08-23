@@ -1,6 +1,6 @@
 [Unit]
 Description=Sentinel — all collectors + alerter
-Wants=sentinel-alerter.service sentinel-truth-social.service sentinel-kalshi.service sentinel-futures.service sentinel-price-followup.service
+Wants=sentinel-alerter.service sentinel-truth-social.service sentinel-kalshi.service sentinel-futures.service sentinel-asx.service sentinel-price-followup.service
 
 [Install]
 WantedBy=default.target

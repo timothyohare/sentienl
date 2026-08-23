@@ -12,6 +12,7 @@ import pytest
 
 from sentinel.core.db import Database
 from sentinel.scripts.price_followup import (
+    AsxPriceFetcher,
     CompositePriceFetcher,
     FuturesPriceFetcher,
     due_updates,
@@ -350,6 +351,49 @@ class TestFuturesPriceFetcher:
             price = fetcher.get_price("futures_oil", "CL=F")
         mock_yf.assert_called_once()
         assert price == 75.0
+
+
+# ---------------------------------------------------------------------------
+# AsxPriceFetcher — IB Gateway (unconfirmed entitlement) ahead of yfinance
+# ---------------------------------------------------------------------------
+
+class TestAsxPriceFetcher:
+    def test_ignores_non_asx_sources(self):
+        fetcher = AsxPriceFetcher(ib_enabled=True)
+        with patch.object(fetcher, "_get_price_ibkr") as mock_ib:
+            assert fetcher.get_price("futures_oil", "CL=F") is None
+        mock_ib.assert_not_called()
+
+    def test_ib_skipped_when_disabled(self):
+        fetcher = AsxPriceFetcher(ib_enabled=False)
+        with (
+            patch.object(fetcher, "_get_price_ibkr") as mock_ib,
+            patch.object(fetcher, "_get_price_yfinance", return_value=45.0),
+        ):
+            price = fetcher.get_price("asx", "BHP.AX")
+        mock_ib.assert_not_called()
+        assert price == 45.0
+
+    def test_ib_used_when_enabled_and_it_returns_a_price(self):
+        fetcher = AsxPriceFetcher(ib_enabled=True)
+        with (
+            patch.object(fetcher, "_get_price_ibkr", return_value=46.5) as mock_ib,
+            patch.object(fetcher, "_get_price_yfinance") as mock_yf,
+        ):
+            price = fetcher.get_price("asx", "BHP.AX")
+        mock_ib.assert_called_once()
+        mock_yf.assert_not_called()
+        assert price == 46.5
+
+    def test_falls_back_to_yfinance_when_ib_returns_none(self):
+        fetcher = AsxPriceFetcher(ib_enabled=True)
+        with (
+            patch.object(fetcher, "_get_price_ibkr", return_value=None),
+            patch.object(fetcher, "_get_price_yfinance", return_value=45.0) as mock_yf,
+        ):
+            price = fetcher.get_price("asx", "BHP.AX")
+        mock_yf.assert_called_once()
+        assert price == 45.0
 
 
 # ---------------------------------------------------------------------------

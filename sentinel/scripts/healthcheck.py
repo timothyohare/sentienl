@@ -63,6 +63,7 @@ MONITORED_UNITS: dict[str, str] = {
     "truth_social": "sentinel-truth-social.service",
     "kalshi": "sentinel-kalshi.service",
     "futures_oil": "sentinel-futures.service",
+    "asx": "sentinel-asx.service",
 }
 
 STALE_THRESHOLD_MINUTES = 30  # a live unit with no signals in this long is QUIET
