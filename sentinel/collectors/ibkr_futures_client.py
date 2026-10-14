@@ -43,9 +43,10 @@ IB_CONTRACT_MAP: dict[str, tuple[str, str]] = {
     "DX-Y.NYB": ("DX", "NYBOT"),
 }
 
-# Informational connection/data-farm status codes IB sends on every
-# successful connection — not failures.
-_INFO_ERROR_CODES = {2103, 2104, 2105, 2106, 2107, 2119, 2158}
+# IB's 2100-2199 range is warnings (data-farm status, version deprecation
+# notices like 2172, ...), sent alongside a successful response — not failures.
+def _is_warning_code(code: int) -> bool:
+    return 2100 <= code <= 2199
 
 
 def _contfut_contract(symbol: str, exchange: str) -> Contract:
@@ -69,7 +70,7 @@ class _HistoricalBarsClient(EWrapper, EClient):
         self.error_detail: str | None = None
 
     def error(self, reqId, errorTime, errorCode, errorString, advancedOrderRejectJson=""):
-        if errorCode in _INFO_ERROR_CODES:
+        if _is_warning_code(errorCode):
             return
         self.error_detail = f"[{errorCode}] {errorString}"
         self.done.set()

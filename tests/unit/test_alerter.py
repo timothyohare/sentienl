@@ -647,6 +647,35 @@ class TestDispatchSignal:
         assert result is False
         assert len(responses_lib.calls) == 0
 
+    def test_rate_limited_signal_is_marked_alerted(self, alerter, mock_db):
+        # Suppressed signals must be consumed, not retried forever: otherwise
+        # they pile up at the head of get_unalerted_signals()' oldest-first
+        # LIMIT and starve every newer signal (incl. CRITICAL) — 2026-09-28.
+        signal_id = mock_db.insert_signal("kalshi", "odds_move", "HIGH", {}, "Move")
+        alerter._rate_limiter.record_sent("kalshi")
+        signal = mock_db.get_unalerted_signals()[0]
+        alerter.dispatch_signal(signal, now_utc=time(11, 0))
+        rows = mock_db.execute_fetchall("SELECT alerted FROM signals WHERE id=?", (signal_id,))
+        assert rows[0]["alerted"] == 1
+
+    def test_quiet_hours_suppressed_signal_is_marked_alerted(self, alerter, mock_db):
+        signal_id = mock_db.insert_signal("futures_oil", "volume_spike", "LOW", {}, "Low")
+        signal = mock_db.get_unalerted_signals()[0]
+        alerter.dispatch_signal(signal, now_utc=time(18, 0))
+        rows = mock_db.execute_fetchall("SELECT alerted FROM signals WHERE id=?", (signal_id,))
+        assert rows[0]["alerted"] == 1
+
+    def test_suppressed_backlog_does_not_starve_critical(self, alerter, mock_db):
+        alerter._rate_limiter.record_sent("kalshi")
+        for i in range(150):
+            mock_db.insert_signal("kalshi", "odds_move", "HIGH", {}, f"Move {i}")
+        mock_db.insert_signal("truth_social", "post", "CRITICAL", {}, "Tariffs")
+        with patch.object(alerter, "send_ntfy", return_value=True) as mock_send:
+            for _ in range(3):
+                alerter.poll_once()
+        assert mock_send.call_count == 1
+        assert mock_db.get_unalerted_signals() == []
+
     def test_dispatch_calls_send_ntfy_with_formatted_title_body_priority_tags(self, alerter):
         sig = make_signal(
             source="polymarket", signal_type="large_bet", priority="HIGH", signal_id=5,

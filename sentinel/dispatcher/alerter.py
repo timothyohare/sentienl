@@ -327,10 +327,11 @@ class Alerter:
         """
         Attempt to dispatch a single signal. Returns True if sent.
 
-        Applies rate limiting and quiet hours before sending.
-        Marks the signal as alerted regardless of send outcome to prevent
-        repeated dispatch attempts on transient failures (caller responsibility
-        to retry if needed — signals that fail to send are logged).
+        Applies rate limiting and quiet hours before sending. Suppressed
+        signals are marked alerted (consumed, never retried) — leaving them
+        unmarked let them clog the head of get_unalerted_signals()' LIMIT and
+        starve every newer signal, CRITICAL included. Only a failed ntfy send
+        is left unmarked, to be retried on the next poll.
         """
         source = signal["source"]
         priority = signal["priority"]
@@ -342,6 +343,7 @@ class Alerter:
                 "Signal %d from %s suppressed (rate limited, priority=%s)",
                 signal_id, source, priority,
             )
+            self.db.mark_alerted(signal_id)
             return False
 
         # Quiet hours check
@@ -349,6 +351,7 @@ class Alerter:
             logger.info(
                 "Signal %d suppressed by quiet hours (priority=%s)", signal_id, priority
             )
+            self.db.mark_alerted(signal_id)
             return False
 
         title, body = AlertFormatter.format_signal(signal)
