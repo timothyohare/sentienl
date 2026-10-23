@@ -103,18 +103,19 @@ class StateStore:
     def set(self, key: str, value: str) -> None:
         """Insert or update a state key."""
         conn = self._conn()
-        conn.execute(
-            "INSERT INTO state (key, value, updated_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-            (key, value, _utcnow()),
-        )
-        conn.commit()
+        with conn:
+            conn.execute(
+                "INSERT INTO state (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                "updated_at=excluded.updated_at",
+                (key, value, _utcnow()),
+            )
 
     def delete(self, key: str) -> None:
         """Remove a state key. No-op if the key does not exist."""
         conn = self._conn()
-        conn.execute("DELETE FROM state WHERE key=?", (key,))
-        conn.commit()
+        with conn:
+            conn.execute("DELETE FROM state WHERE key=?", (key,))
 
 
 class WalletCache:
@@ -135,13 +136,13 @@ class WalletCache:
     def set(self, address: str, first_tx_date: str | None) -> None:
         """Insert or update a wallet cache entry."""
         conn = self._conn()
-        conn.execute(
-            "INSERT INTO wallet_cache (address, first_tx_date, queried_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(address) DO UPDATE SET first_tx_date=excluded.first_tx_date, "
-            "queried_at=excluded.queried_at",
-            (address, first_tx_date, _utcnow()),
-        )
-        conn.commit()
+        with conn:
+            conn.execute(
+                "INSERT INTO wallet_cache (address, first_tx_date, queried_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(address) DO UPDATE SET first_tx_date=excluded.first_tx_date, "
+                "queried_at=excluded.queried_at",
+                (address, first_tx_date, _utcnow()),
+            )
 
 
 class PostPriceTracking:
@@ -159,13 +160,13 @@ class PostPriceTracking:
     ) -> None:
         """Create a new price tracking record for a signal."""
         conn = self._conn()
-        conn.execute(
-            "INSERT OR IGNORE INTO post_price_tracking "
-            "(signal_id, source, instrument, price_t0, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (signal_id, source, instrument, price_t0, _utcnow()),
-        )
-        conn.commit()
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO post_price_tracking "
+                "(signal_id, source, instrument, price_t0, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (signal_id, source, instrument, price_t0, _utcnow()),
+            )
 
     def update_price(self, signal_id: int, instrument: str, column: str, price: float) -> None:
         """Update a specific price column (price_t15, price_t60, etc.)."""
@@ -174,12 +175,12 @@ class PostPriceTracking:
                 f"Invalid price column: {column!r}. Must be one of {_VALID_PRICE_COLUMNS}"
             )
         conn = self._conn()
-        conn.execute(
-            f"UPDATE post_price_tracking SET {column}=? "
-            "WHERE signal_id=? AND instrument=?",
-            (price, signal_id, instrument),
-        )
-        conn.commit()
+        with conn:
+            conn.execute(
+                f"UPDATE post_price_tracking SET {column}=? "
+                "WHERE signal_id=? AND instrument=?",
+                (price, signal_id, instrument),
+            )
 
     def get_pending_updates(self) -> list[dict[str, Any]]:
         """Return rows where not all price columns are filled in yet."""
@@ -214,12 +215,12 @@ class PriceSamples:
     ) -> None:
         """Record a price observation. Not tied to any signal."""
         conn = self._conn()
-        conn.execute(
-            "INSERT INTO price_samples (source, instrument, price, sampled_at) "
-            "VALUES (?, ?, ?, ?)",
-            (source, instrument, price, sampled_at or _utcnow()),
-        )
-        conn.commit()
+        with conn:
+            conn.execute(
+                "INSERT INTO price_samples (source, instrument, price, sampled_at) "
+                "VALUES (?, ?, ?, ?)",
+                (source, instrument, price, sampled_at or _utcnow()),
+            )
 
     def get_samples(self, source: str, instrument: str) -> list[dict[str, Any]]:
         """Return all samples for (source, instrument), oldest first."""
@@ -324,13 +325,13 @@ class Database:
         conn = self._get_conn()
         payload_json = json.dumps(payload, ensure_ascii=False)
         ts = created_at or _utcnow()
-        cursor = conn.execute(
-            "INSERT INTO signals "
-            "(source, signal_type, priority, payload, summary, alerted, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (source, signal_type, priority, payload_json, summary, int(alerted), ts),
-        )
-        conn.commit()
+        with conn:
+            cursor = conn.execute(
+                "INSERT INTO signals "
+                "(source, signal_type, priority, payload, summary, alerted, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (source, signal_type, priority, payload_json, summary, int(alerted), ts),
+            )
         logger.debug("Inserted signal id=%d source=%s type=%s priority=%s",
                      cursor.lastrowid, source, signal_type, priority)
         assert cursor.lastrowid is not None  # guaranteed after a successful INSERT
@@ -339,8 +340,8 @@ class Database:
     def mark_alerted(self, signal_id: int) -> None:
         """Mark a signal as alerted (alerted=1)."""
         conn = self._get_conn()
-        conn.execute("UPDATE signals SET alerted=1 WHERE id=?", (signal_id,))
-        conn.commit()
+        with conn:
+            conn.execute("UPDATE signals SET alerted=1 WHERE id=?", (signal_id,))
 
     def get_unalerted_signals(
         self, limit: int = 100
@@ -415,10 +416,10 @@ class Database:
         from datetime import timedelta
         cutoff = cutoff - timedelta(days=days)
         cutoff_str = cutoff.isoformat()
-        cursor = conn.execute(
-            "DELETE FROM signals WHERE created_at < ?", (cutoff_str,)
-        )
-        conn.commit()
+        with conn:
+            cursor = conn.execute(
+                "DELETE FROM signals WHERE created_at < ?", (cutoff_str,)
+            )
         logger.info("Retention cleanup: deleted %d signals older than %d days",
                     cursor.rowcount, days)
         return cursor.rowcount

@@ -514,3 +514,35 @@ class TestUpdatePriceInvalidColumn:
     def test_invalid_column_error_names_column(self, tmp_db):
         with pytest.raises(ValueError, match="price_bogus"):
             tmp_db.price_tracking.update_price(1, "CL=F", "price_bogus", 1.0)
+
+
+class TestFailedWriteLeavesNoOpenTransaction:
+    """2026-10-14 -> 10-24: a write that failed on a busy lock left the
+    alerter's connection inside Python's implicit BEGIN. Its read snapshot
+    went stale, so every later write raised "database is locked" (41,876
+    log lines) and the WAL couldn't checkpoint past it (grew to 17.6 GB).
+    A failed write must roll back, so the next one can succeed."""
+
+    def test_write_succeeds_after_a_failed_one(self, tmp_path):
+        import sqlite3
+        db = Database(str(tmp_path / "t.db"))
+        db.init()
+        signal_id = db.insert_signal(source="kalshi", signal_type="t", priority="LOW",
+                                     summary="s", payload={})
+        db._get_conn().execute("PRAGMA busy_timeout=50")
+
+        blocker = sqlite3.connect(str(tmp_path / "t.db"))
+        blocker.execute("BEGIN IMMEDIATE")  # hold the write lock
+        with pytest.raises(sqlite3.OperationalError):
+            db.mark_alerted(signal_id)
+        blocker.rollback()
+
+        assert not db._get_conn().in_transaction
+        # Another connection commits in between, so a stale snapshot on
+        # db's connection would now make every write fail.
+        blocker.execute("INSERT INTO state (key, value, updated_at) VALUES ('x', 'y', 'z')")
+        blocker.commit()
+        db.mark_alerted(signal_id)
+        assert db.execute_scalar("SELECT alerted FROM signals WHERE id=?", (signal_id,)) == 1
+        blocker.close()
+        db.close()
