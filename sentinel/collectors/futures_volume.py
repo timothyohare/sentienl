@@ -26,7 +26,7 @@ to avoid false positives from front-month/second-month volume rotation.
 import logging
 import time
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,35 @@ SOURCE_MAP = {
 # ---------------------------------------------------------------------------
 # Pure helper functions
 # ---------------------------------------------------------------------------
+
+# yfinance bars this recent mean the market is trading, so an empty IB
+# response at the same moment is IB failing, not the market being shut.
+# Generous because yfinance's futures feed lags ~10-20 min.
+IB_FALLBACK_FRESH_MINUTES = 30
+
+
+def record_ib_outcome(
+    db, source: str, ticker: str, ib_bars: list[dict[str, Any]],
+    fallback_bars: list[dict[str, Any]] | None = None,
+) -> None:
+    """Record in `db.state` whether IB served `ticker`'s bars
+    (`ib_ok:<source>:<ticker>`) or the collector fell back to fresh yfinance
+    bars instead (`ib_fallback:<source>:<ticker>`). healthcheck.py reads
+    these to catch a silent IB -> yfinance fallback (2026-10-13: IB's code
+    2172 notice was treated as fatal for a day before anyone noticed)."""
+    now = datetime.now(UTC)
+    if ib_bars:
+        db.state.set(f"ib_ok:{source}:{ticker}", now.isoformat())
+        return
+    if not fallback_bars:
+        return
+    try:
+        latest = datetime.fromisoformat(str(_canonical_ts(fallback_bars[-1].get("timestamp"))))
+    except ValueError:
+        return
+    if now - latest <= timedelta(minutes=IB_FALLBACK_FRESH_MINUTES):
+        db.state.set(f"ib_fallback:{source}:{ticker}", now.isoformat())
+
 
 def _canonical_ts(ts: Any) -> str | None:
     """
@@ -277,8 +306,12 @@ class FuturesVolumeCollector:
         if self._ib_enabled:
             bars = self._fetch_ibkr(ticker)
             if bars:
+                record_ib_outcome(self.db, "futures", ticker, bars)
                 return bars
             logger.info("IB Gateway returned no data for %s — falling back to yfinance", ticker)
+            bars = self._fetch_yfinance(ticker)
+            record_ib_outcome(self.db, "futures", ticker, [], bars)
+            return bars
         return self._fetch_yfinance(ticker)
 
     # ------------------------------------------------------------------

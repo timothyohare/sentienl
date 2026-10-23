@@ -16,7 +16,9 @@ from sentinel.scripts.signal_scorecard import (
     compute_baseline,
     compute_effect_sizes,
     compute_random_baseline,
+    compute_random_baseline_stats,
     effect_size,
+    in_asx_session,
 )
 
 
@@ -259,3 +261,83 @@ class TestComputeRandomBaseline:
         )
         assert baseline[("kalshi", "price_t15")] == pytest.approx(0.0)
         assert baseline[("futures_oil", "price_t15")] > 0.0
+
+
+class TestInAsxSession:
+    def test_weekday_midday_sydney_is_in_session(self):
+        # 2026-08-03 is a Monday; 12:00 AEST = 02:00 UTC
+        assert in_asx_session(datetime(2026, 8, 3, 2, 0, tzinfo=UTC))
+
+    def test_open_is_inclusive_close_is_exclusive(self):
+        assert in_asx_session(datetime(2026, 8, 3, 0, 0, tzinfo=UTC))      # 10:00 AEST
+        assert not in_asx_session(datetime(2026, 8, 3, 6, 0, tzinfo=UTC))  # 16:00 AEST
+
+    def test_overnight_is_out_of_session(self):
+        assert not in_asx_session(datetime(2026, 8, 3, 12, 0, tzinfo=UTC))  # 22:00 AEST
+
+    def test_weekend_is_out_of_session(self):
+        assert not in_asx_session(datetime(2026, 8, 1, 2, 0, tzinfo=UTC))  # Saturday
+
+    def test_daylight_saving_is_respected(self):
+        # 2026-11-02 (Mon) is AEDT (UTC+11): 23:30 UTC Sunday = 10:30 Monday
+        assert in_asx_session(datetime(2026, 11, 1, 23, 30, tzinfo=UTC))
+
+
+class TestAsxBaselineIgnoresClosedMarket:
+    def test_overnight_flat_samples_do_not_zero_the_baseline(self, tmp_db):
+        # One trading session of moving prices (10:00-15:55 AEST, 2026-08-03),
+        # then many flat overnight samples — like the live data, where ~80%
+        # of ASX samples are unchanged because the market is shut.
+        start = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
+        for i in range(72):  # 6h of 5-min samples, alternating price
+            tmp_db.price_samples.insert(
+                "asx", "BHP.AX", 40.0 + (i % 2) * 0.4,
+                sampled_at=(start + timedelta(minutes=5 * i)).isoformat())
+        for i in range(72, 288):  # rest of the day, closed and flat
+            tmp_db.price_samples.insert(
+                "asx", "BHP.AX", 40.0,
+                sampled_at=(start + timedelta(minutes=5 * i)).isoformat())
+
+        baseline = compute_random_baseline(tmp_db, {("asx", "BHP.AX")})
+        assert baseline[("asx", "price_t15")] > 0
+
+
+class TestRandomMoveRate:
+    def test_move_rate_is_fraction_of_nonzero_pairs(self, tmp_db):
+        # 15-min samples -> 6 consecutive 15-min pairs, only one of which moved
+        prices = [100.0, 100.0, 100.0, 100.0, 101.0, 101.0, 101.0]
+        for i, p in enumerate(prices):
+            tmp_db.price_samples.insert("kalshi", "T1", p, sampled_at=_ts(i * 15))
+
+        medians, rates = compute_random_baseline_stats(tmp_db, {("kalshi", "T1")})
+        assert medians[("kalshi", "price_t15")] == pytest.approx(0.0)
+        assert rates[("kalshi", "price_t15")] == pytest.approx(1 / 6)
+
+    def test_scorecard_compares_move_rates_when_baseline_median_is_zero(self):
+        rows = [
+            {"source": "kalshi", "signal_type": "large_bet", "price_t0": 0.30,
+             "price_t15": p, "price_t60": None, "price_t240": None, "price_t1440": None}
+            for p in (0.30, 0.30, 0.31)  # moved 1 in 3; median move is 0
+        ]
+        beats = build_scorecard(
+            rows, random_baseline={("kalshi", "price_t15"): 0.0},
+            random_move_rate={("kalshi", "price_t15"): 0.10})[0]
+        assert beats["baseline_source"] == "random_move_rate"
+        assert beats["move_rate"] == pytest.approx(1 / 3)
+        assert beats["baseline_move_rate"] == pytest.approx(0.10)
+        assert beats["beats_baseline"] is True
+
+        loses = build_scorecard(
+            rows, random_baseline={("kalshi", "price_t15"): 0.0},
+            random_move_rate={("kalshi", "price_t15"): 0.50})[0]
+        assert loses["beats_baseline"] is False
+
+    def test_nonzero_baseline_median_still_uses_effect_size(self):
+        rows = [{"source": "futures_oil", "signal_type": "volume_spike", "price_t0": 100.0,
+                 "price_t15": 101.0, "price_t60": None, "price_t240": None,
+                 "price_t1440": None}]
+        entry = build_scorecard(
+            rows, random_baseline={("futures_oil", "price_t15"): 0.005},
+            random_move_rate={("futures_oil", "price_t15"): 0.99})[0]
+        assert entry["baseline_source"] == "random_window"
+        assert entry["beats_baseline"] is True

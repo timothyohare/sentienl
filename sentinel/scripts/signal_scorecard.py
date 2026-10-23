@@ -22,6 +22,16 @@ tracked signals typically do," not "moved more than market noise
 typically does." Each printed line is tagged `[random]` or `[proxy]` so
 it's clear which bar was actually cleared.
 
+Two sources need special handling or their baseline is ~0 and every
+signal "beats" it (found 2026-10-14):
+  - ASX is shut ~18h a day, so most 5-min samples are unchanged. Only
+    samples taken inside the Sydney trading session are paired.
+  - Kalshi prices are unchanged in ~99% of sample pairs (thin markets), so
+    the median move is exactly 0 at every horizon. Wherever a random-window
+    median is 0, the comparison switches to move *rate* — the share of
+    windows where the price moved at all, after a signal vs at random —
+    tagged `[rate]`.
+
 Exit code is always 0 — this is a reporting tool, not a pass/fail gate.
 """
 
@@ -30,7 +40,9 @@ import logging
 import os
 import sys
 from collections import defaultdict
+from datetime import datetime, time
 from statistics import median
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -42,6 +54,27 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("sentinel.signal_scorecard")
 
 HORIZONS = tuple(column for column, _minutes in HORIZON_MINUTES)
+
+ASX_TZ = ZoneInfo("Australia/Sydney")
+ASX_OPEN, ASX_CLOSE = time(10, 0), time(16, 0)  # continuous trading session
+
+
+def in_asx_session(moment: datetime) -> bool:
+    """True if `moment` (tz-aware) falls in ASX continuous trading,
+    10:00-16:00 Sydney time, Monday-Friday. Public holidays aren't
+    excluded; they only add a few flat days a year."""
+    local = moment.astimezone(ASX_TZ)
+    return local.weekday() < 5 and ASX_OPEN <= local.time() < ASX_CLOSE
+
+
+def _baseline_samples(db: Database, source: str, instrument: str) -> list[dict]:
+    samples = db.price_samples.get_samples(source, instrument)
+    if source == "asx":
+        samples = [
+            s for s in samples
+            if in_asx_session(datetime.fromisoformat(str(s["sampled_at"]).replace("Z", "+00:00")))
+        ]
+    return samples
 
 
 def _fetch_tracked_rows(db: Database) -> list[dict]:
@@ -83,36 +116,51 @@ def compute_baseline(sizes: dict[tuple[str, str, str], list[float]]) -> dict[str
     return {horizon: median(values) for horizon, values in by_horizon.items() if values}
 
 
-def compute_random_baseline(
+def compute_random_baseline_stats(
     db: Database, instruments: set[tuple[str, str]], min_samples: int = 5
-) -> dict[tuple[str, str], float]:
-    """True random-window baseline: pooled median effect size from
-    `price_samples` pairs (see `price_followup.random_window_effect_sizes`),
-    partitioned by (source, horizon) — pooling instruments of the *same*
-    source (e.g. multiple Kalshi tickers) is fine, but pooling across
-    different sources is not: Kalshi's mostly-flat thin markets vastly
-    outnumber futures' sample pairs and drag a globally-pooled median
-    toward zero, understating what "normal" movement looks like for a
-    liquid futures instrument. A (source, horizon) is included only once
-    it has at least `min_samples` pooled data points — otherwise
-    `build_scorecard()` falls back to the pooled-proxy baseline for that
-    (source, horizon)."""
+) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
+    """True random-window baseline: from `price_samples` pairs (see
+    `price_followup.random_window_effect_sizes`), partitioned by
+    (source, horizon), return (median effect size, move rate) — move rate
+    being the share of pairs whose price changed at all. Pooling
+    instruments of the *same* source (e.g. multiple Kalshi tickers) is
+    fine, but pooling across different sources is not: Kalshi's
+    mostly-flat thin markets vastly outnumber futures' sample pairs and
+    drag a globally-pooled median toward zero, understating what "normal"
+    movement looks like for a liquid futures instrument. A (source,
+    horizon) is included only once it has at least `min_samples` pooled
+    data points — otherwise `build_scorecard()` falls back to the
+    pooled-proxy baseline for that (source, horizon)."""
     by_source_horizon: dict[tuple[str, str], list[float]] = defaultdict(list)
     for source, instrument in instruments:
-        samples = db.price_samples.get_samples(source, instrument)
+        samples = _baseline_samples(db, source, instrument)
         for column, horizon_minutes in HORIZON_MINUTES:
             by_source_horizon[(source, column)].extend(
                 random_window_effect_sizes(samples, horizon_minutes)
             )
-    return {
-        key: median(values)
-        for key, values in by_source_horizon.items()
-        if len(values) >= min_samples
-    }
+    medians, move_rates = {}, {}
+    for key, values in by_source_horizon.items():
+        if len(values) >= min_samples:
+            medians[key] = median(values)
+            move_rates[key] = _move_rate(values)
+    return medians, move_rates
+
+
+def compute_random_baseline(
+    db: Database, instruments: set[tuple[str, str]], min_samples: int = 5
+) -> dict[tuple[str, str], float]:
+    """Median-only view of compute_random_baseline_stats()."""
+    return compute_random_baseline_stats(db, instruments, min_samples)[0]
+
+
+def _move_rate(values: list[float]) -> float:
+    return sum(1 for v in values if v > 0) / len(values)
 
 
 def build_scorecard(
-    rows: list[dict], random_baseline: dict[tuple[str, str], float] | None = None
+    rows: list[dict],
+    random_baseline: dict[tuple[str, str], float] | None = None,
+    random_move_rate: dict[tuple[str, str], float] | None = None,
 ) -> list[dict]:
     """Per (source, signal_type, horizon): sample size, median effect size,
     and whether it beats the baseline for that horizon. Prefers the true
@@ -121,8 +169,10 @@ def build_scorecard(
     source's noise floor, where enough price_samples data exists; falls
     back to the pooled-proxy baseline (median across other tracked signal
     types — see module docstring) for any (source, horizon) without it
-    yet."""
+    yet. Where the random-window median is 0 and a move rate is known,
+    the verdict compares move rates instead (see module docstring)."""
     random_baseline = random_baseline or {}
+    random_move_rate = random_move_rate or {}
     sizes = compute_effect_sizes(rows)
     proxy_baseline = compute_baseline(sizes)
 
@@ -135,6 +185,14 @@ def build_scorecard(
             baseline_value = proxy_baseline.get(horizon, 0.0)
             baseline_source = "pooled_proxy"
         median_value = median(values)
+        move_rate = _move_rate(values)
+        baseline_move_rate = random_move_rate.get((source, horizon))
+        if (baseline_source == "random_window" and baseline_value == 0
+                and baseline_move_rate is not None):
+            baseline_source = "random_move_rate"
+            beats = move_rate > baseline_move_rate
+        else:
+            beats = median_value > baseline_value
         scorecard.append({
             "source": source,
             "signal_type": signal_type,
@@ -143,7 +201,9 @@ def build_scorecard(
             "median_effect_size": median_value,
             "baseline_effect_size": baseline_value,
             "baseline_source": baseline_source,
-            "beats_baseline": median_value > baseline_value,
+            "move_rate": move_rate,
+            "baseline_move_rate": baseline_move_rate,
+            "beats_baseline": beats,
         })
     return scorecard
 
@@ -165,17 +225,19 @@ def main():
     db.init()
     rows = _fetch_tracked_rows(db)
     instruments = {(r["source"], r["instrument"]) for r in rows}
-    random_baseline = compute_random_baseline(db, instruments)
+    random_baseline, random_move_rate = compute_random_baseline_stats(db, instruments)
     db.close()
 
     if not rows:
         logger.info("No price-tracked signals yet — nothing to score.")
         sys.exit(0)
 
-    scorecard = build_scorecard(rows, random_baseline)
+    scorecard = build_scorecard(rows, random_baseline, random_move_rate)
 
     logger.info("=== Signal-to-noise scorecard (price follow-through) ===")
     logger.info("[random] = true random-window baseline from price_samples.")
+    logger.info("[rate]   = random-window median move is 0, so compares how often")
+    logger.info("           the price moved at all: after signal vs at random.")
     logger.info("[proxy]  = pooled median across other tracked signal types")
     logger.info("           (not a true null — see script docstring), used until")
     logger.info("           enough price_samples accumulate for that horizon.")
@@ -185,8 +247,17 @@ def main():
         if entry["n"] < args.min_sample:
             continue
         reported += 1
-        tag = "[random]" if entry["baseline_source"] == "random_window" else "[proxy] "
+        tag = {"random_window": "[random]", "random_move_rate": "[rate]  "}.get(
+            entry["baseline_source"], "[proxy] ")
         verdict = "beats baseline" if entry["beats_baseline"] else "at/below baseline"
+        if entry["baseline_source"] == "random_move_rate":
+            logger.info(
+                "  %-14s %-14s %-11s n=%-4d moved=%.0f%% baseline moved=%.1f%% %s (%s)",
+                entry["source"], entry["signal_type"], entry["horizon"],
+                entry["n"], entry["move_rate"] * 100,
+                entry["baseline_move_rate"] * 100, tag, verdict,
+            )
+            continue
         logger.info(
             "  %-14s %-14s %-11s n=%-4d median=%.3f%% baseline=%.3f%% %s (%s)",
             entry["source"], entry["signal_type"], entry["horizon"],

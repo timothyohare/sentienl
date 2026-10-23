@@ -1,6 +1,6 @@
 """Unit tests for collectors/asx.py."""
 
-from datetime import time
+from datetime import UTC, datetime, time, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -268,3 +268,19 @@ class TestDataGapHandling:
         instrument = mock_instrument("BHP.AX", "BHP Group", 10000)
         bar_incomplete = {"volume": 5000}
         collector.process_instrument(instrument, bar_incomplete, time(2, 0))
+
+
+class TestIbOutcomeRecording:
+    def test_records_ok_and_fallback_under_asx_source(self, collector, mock_db):
+        collector._ib_enabled = True
+        fresh = [{"volume": 1, "close": 1.0, "open": 1.0,
+                  "timestamp": (datetime.now(UTC) - timedelta(minutes=5)).isoformat()}]
+        with patch.object(collector, "_fetch_ibkr", return_value=fresh):
+            collector.fetch_bars("BHP.AX")
+        with (
+            patch.object(collector, "_fetch_ibkr", return_value=[]),
+            patch.object(collector, "_fetch_yfinance", return_value=fresh),
+        ):
+            collector.fetch_bars("CBA.AX")
+        assert mock_db.state.get("ib_ok:asx:BHP.AX") is not None
+        assert mock_db.state.get("ib_fallback:asx:CBA.AX") is not None

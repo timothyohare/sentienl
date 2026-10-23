@@ -35,6 +35,7 @@ from sentinel.collectors.futures_volume import (
     _canonical_ts,
     _compute_rolling_average,
     _detect_volume_spike,
+    record_ib_outcome,
 )
 
 logger = logging.getLogger(__name__)
@@ -175,8 +176,12 @@ class AsxCollector:
         if self._ib_enabled:
             bars = self._fetch_ibkr(ticker)
             if bars:
+                record_ib_outcome(self.db, SOURCE, ticker, bars)
                 return bars
             logger.info("IB Gateway returned no data for %s — falling back to yfinance", ticker)
+            bars = self._fetch_yfinance(ticker)
+            record_ib_outcome(self.db, SOURCE, ticker, [], bars)
+            return bars
         return self._fetch_yfinance(ticker)
 
     # ------------------------------------------------------------------

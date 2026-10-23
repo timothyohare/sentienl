@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import httpx
+import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -112,20 +113,33 @@ def random_window_effect_sizes(
     tolerance. This measures how much the instrument moves over N minutes
     when nothing signal-worthy happened, from routine backfill-cadence
     sampling — not another signal-triggered measurement.
+
+    Vectorised by lag k (sample i vs sample i+k) rather than looping over
+    pairs: on ~1M samples the pairwise loop never finished (>8 min), this
+    takes seconds. Since samples are time-ordered, every gap grows with k,
+    so once the smallest lag-k gap exceeds the upper bound no larger lag
+    can match. Results are ordered by lag, then by i — callers only take
+    medians/rates, so order is irrelevant.
     """
+    if len(samples) < 2:
+        return []
     tolerance = tolerance_minutes if tolerance_minutes is not None else horizon_minutes * 0.2
     lower, upper = horizon_minutes - tolerance, horizon_minutes + tolerance
-    sizes = []
-    for i, s1 in enumerate(samples):
-        t1 = datetime.fromisoformat(str(s1["sampled_at"]).replace("Z", "+00:00"))
-        for s2 in samples[i + 1:]:
-            t2 = datetime.fromisoformat(str(s2["sampled_at"]).replace("Z", "+00:00"))
-            gap_minutes = (t2 - t1).total_seconds() / 60
-            if gap_minutes > upper:
-                break  # samples are time-ordered: no later pair will be closer
-            if gap_minutes >= lower:
-                sizes.append(abs(s2["price"] - s1["price"]) / abs(s1["price"]))
-    return sizes
+    times = np.array([
+        datetime.fromisoformat(str(s["sampled_at"]).replace("Z", "+00:00")).timestamp() / 60
+        for s in samples
+    ])
+    prices = np.array([s["price"] for s in samples], dtype=float)
+    chunks = []
+    for lag in range(1, len(samples)):
+        gaps = times[lag:] - times[:-lag]
+        if gaps.min() > upper:
+            break
+        in_window = (gaps >= lower) & (gaps <= upper)
+        if in_window.any():
+            start, end = prices[:-lag][in_window], prices[lag:][in_window]
+            chunks.append(np.abs(end - start) / np.abs(start))
+    return np.concatenate(chunks).tolist() if chunks else []
 
 
 # ---------------------------------------------------------------------------

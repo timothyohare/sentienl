@@ -12,7 +12,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from sentinel.core.db import Database
-from sentinel.scripts.healthcheck import MONITORED_UNITS, check_health, should_send_heartbeat
+from sentinel.scripts.healthcheck import (
+    MONITORED_UNITS,
+    alerter_backlog,
+    check_health,
+    ib_fallbacks,
+    should_send_heartbeat,
+)
 
 
 class FakeUnitChecker:
@@ -113,3 +119,45 @@ class TestShouldSendHeartbeat:
         now_utc = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
 
         assert should_send_heartbeat(False, {8, 20}, now_utc) is False
+
+
+class TestAlerterBacklog:
+    """Signals still alerted=0 long after insert mean the alerter is stuck
+    (2026-09-28 -> 10-14: 3,754 signals, unnoticed because alerts were off)."""
+
+    def test_old_unalerted_signal_counts(self, db):
+        _insert_signal(db, "kalshi", datetime.now(UTC) - timedelta(minutes=30))
+        assert alerter_backlog(db, older_than_minutes=10) == 1
+
+    def test_recent_unalerted_signal_does_not_count(self, db):
+        _insert_signal(db, "kalshi", datetime.now(UTC) - timedelta(minutes=2))
+        assert alerter_backlog(db, older_than_minutes=10) == 0
+
+    def test_alerted_signal_does_not_count(self, db):
+        _insert_signal(db, "kalshi", datetime.now(UTC) - timedelta(minutes=30))
+        signal_id = db.execute_scalar("SELECT MAX(id) FROM signals")
+        db.mark_alerted(signal_id)
+        assert alerter_backlog(db, older_than_minutes=10) == 0
+
+
+class TestIbFallbacks:
+    def _set(self, db, key, minutes_ago):
+        db.state.set(key, (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat())
+
+    def test_recent_fallback_with_no_ib_success_flags(self, db):
+        self._set(db, "ib_fallback:futures:CL=F", 5)
+        assert ib_fallbacks(db, window_minutes=30) == ["futures:CL=F"]
+
+    def test_fallback_older_than_last_ib_success_is_fine(self, db):
+        self._set(db, "ib_fallback:futures:CL=F", 10)
+        self._set(db, "ib_ok:futures:CL=F", 2)
+        assert ib_fallbacks(db, window_minutes=30) == []
+
+    def test_fallback_newer_than_last_ib_success_flags(self, db):
+        self._set(db, "ib_ok:asx:BHP.AX", 20)
+        self._set(db, "ib_fallback:asx:BHP.AX", 1)
+        assert ib_fallbacks(db, window_minutes=30) == ["asx:BHP.AX"]
+
+    def test_fallback_outside_window_is_ignored(self, db):
+        self._set(db, "ib_fallback:futures:CL=F", 120)
+        assert ib_fallbacks(db, window_minutes=30) == []

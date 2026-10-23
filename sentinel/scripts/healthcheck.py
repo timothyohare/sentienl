@@ -26,6 +26,17 @@ Two independent checks per source, combined into one status:
     between large bets, or futures overnight). That's QUIET, not a failure
     — only DOWN fails the health check and the exit code.
 
+Plus two checks that catch collectors/alerter that are running but not
+doing their job (both 2026-10-14 bugs passed the liveness check):
+  - Alerter backlog — any signal still `alerted=0` more than
+    `--backlog-minutes` (default 10) after insert means the alerter is
+    stuck. The alerter marks every signal it handles, sent or suppressed,
+    within seconds.
+  - IB fallback — a collector recently fell back from IB Gateway to
+    *fresh* yfinance bars (market open, IB returned nothing) with no IB
+    success since. See futures_volume.record_ib_outcome().
+Either one fails the check, like DOWN.
+
 Cron entry (adjust paths):
   0 * * * * /home/timohare/dev/newdev/Sentinel/venv/bin/python \
     /home/timohare/dev/newdev/Sentinel/sentinel/scripts/healthcheck.py \
@@ -35,7 +46,8 @@ Cron entry (adjust paths):
 
 Exit codes:
   0 — No collector unit is DOWN (QUIET is not a failure)
-  1 — One or more collector units are DOWN, or the DB is inaccessible
+  1 — A collector unit is DOWN, the alerter is backlogged, an IB feed has
+      fallen back to yfinance, or the DB is inaccessible
 """
 
 import argparse
@@ -67,6 +79,8 @@ MONITORED_UNITS: dict[str, str] = {
 }
 
 STALE_THRESHOLD_MINUTES = 30  # a live unit with no signals in this long is QUIET
+ALERTER_BACKLOG_MINUTES = 10  # an unalerted signal older than this means the alerter is stuck
+IB_FALLBACK_WINDOW_MINUTES = 30  # only fallbacks this recent count
 
 AEST_OFFSET = timedelta(hours=10)  # fixed offset, matches dashboard/app.py
 HEARTBEAT_HOURS_AEST = (8, 20)  # routine "all healthy" heartbeat sent only at these hours
@@ -141,6 +155,33 @@ def check_health(
     return results
 
 
+def alerter_backlog(db: Database, older_than_minutes: int) -> int:
+    """Number of signals the alerter hasn't handled within the window."""
+    cutoff = (datetime.now(UTC) - timedelta(minutes=older_than_minutes)).isoformat()
+    return db.execute_scalar(
+        "SELECT COUNT(*) FROM signals WHERE alerted=0 AND created_at < ?", (cutoff,)
+    ) or 0
+
+
+def ib_fallbacks(db: Database, window_minutes: int) -> list[str]:
+    """`<source>:<ticker>` feeds whose most recent outcome (within the
+    window) was a fallback from IB to fresh yfinance bars."""
+    cutoff = datetime.now(UTC) - timedelta(minutes=window_minutes)
+    rows = db.execute_fetchall(
+        "SELECT key, value FROM state WHERE key LIKE 'ib_fallback:%' OR key LIKE 'ib_ok:%'"
+    )
+    latest = {row["key"]: datetime.fromisoformat(row["value"]) for row in rows}
+    failing = []
+    for key, fell_back_at in sorted(latest.items()):
+        if not key.startswith("ib_fallback:") or fell_back_at < cutoff:
+            continue
+        feed = key.removeprefix("ib_fallback:")
+        ok_at = latest.get(f"ib_ok:{feed}")
+        if ok_at is None or ok_at < fell_back_at:
+            failing.append(feed)
+    return failing
+
+
 def should_send_heartbeat(any_down: bool, heartbeat_hours: set[int], now_utc: datetime) -> bool:
     """A DOWN status always sends immediately; otherwise the routine
     'all healthy' heartbeat only sends during one of `heartbeat_hours`
@@ -177,6 +218,7 @@ def main():
     parser.add_argument("--heartbeat", action="store_true",
                         help="Send a heartbeat ntfy notification")
     parser.add_argument("--stale-minutes", type=int, default=STALE_THRESHOLD_MINUTES)
+    parser.add_argument("--backlog-minutes", type=int, default=ALERTER_BACKLOG_MINUTES)
     parser.add_argument(
         "--heartbeat-hours", default=",".join(str(h) for h in HEARTBEAT_HOURS_AEST),
         help="Comma-separated AEST hours (0-23) at which the routine 'all "
@@ -195,7 +237,9 @@ def main():
 
     results = check_health(db, args.stale_minutes, SystemdUnitChecker())
     down = [s for s, r in results.items() if r["status"] == "DOWN"]
-    all_healthy = not down
+    backlog = alerter_backlog(db, args.backlog_minutes)
+    fallbacks = ib_fallbacks(db, IB_FALLBACK_WINDOW_MINUTES)
+    all_healthy = not down and not backlog and not fallbacks
 
     for source, status in results.items():
         logger.info(
@@ -203,6 +247,10 @@ def main():
             status["status"], source, status["unit"],
             status["signals_in_window"], args.stale_minutes,
         )
+    logger.info("[%s] alerter — %d signal(s) unalerted after %dm",
+                "STUCK" if backlog else "OK", backlog, args.backlog_minutes)
+    logger.info("[%s] IB Gateway — fell back to yfinance: %s",
+                "DEGRADED" if fallbacks else "OK", ", ".join(fallbacks) or "none")
 
     if args.heartbeat and os.path.exists(args.config):
         heartbeat_hours = {int(h) for h in args.heartbeat_hours.split(",") if h.strip()}
@@ -210,6 +258,10 @@ def main():
             try:
                 config = load_config(args.config)
                 lines = [f"{source}: {r['status']}" for source, r in results.items()]
+                if backlog:
+                    lines.append(f"alerter: STUCK ({backlog} unalerted >{args.backlog_minutes}m)")
+                if fallbacks:
+                    lines.append(f"IB fallback to yfinance: {', '.join(fallbacks)}")
                 message = "Sentinel alive\n" + "\n".join(lines)
                 send_heartbeat(config, message)
             except Exception as exc:
@@ -223,10 +275,11 @@ def main():
     db.close()
 
     if not all_healthy:
-        logger.warning("Down collector units: %s", down)
+        logger.warning("Unhealthy — down units: %s, alerter backlog: %d, IB fallbacks: %s",
+                       down, backlog, fallbacks)
         sys.exit(1)
 
-    logger.info("All collector units up")
+    logger.info("All collector units up, alerter current, IB serving data")
     sys.exit(0)
 
 

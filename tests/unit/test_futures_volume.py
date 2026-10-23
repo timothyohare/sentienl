@@ -1,6 +1,6 @@
 """Unit tests for collectors/futures_volume.py."""
 
-from datetime import time
+from datetime import UTC, datetime, time, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -680,3 +680,52 @@ class TestInitWiring:
         c = FuturesVolumeCollector(config=mock_config, db=mock_db)
         assert c._alpaca_api_key == "ak"
         assert c._alpaca_api_secret == "as"
+
+
+class TestIbOutcomeRecording:
+    """fetch_bars() records whether IB served the bars, so healthcheck.py
+    can spot a silent IB -> yfinance fallback (the 2026-10-13 code-2172
+    incident ran a day before anyone noticed)."""
+
+    def _fresh_bar(self, minutes_ago=5):
+        ts = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+        return [{"volume": 1, "close": 1.0, "open": 1.0, "timestamp": ts.isoformat()}]
+
+    def test_ib_success_records_ok(self, collector, mock_db):
+        collector._alpaca_api_key = None
+        collector._ib_enabled = True
+        with patch.object(collector, "_fetch_ibkr", return_value=self._fresh_bar()):
+            collector.fetch_bars("CL=F")
+        assert mock_db.state.get("ib_ok:futures:CL=F") is not None
+        assert mock_db.state.get("ib_fallback:futures:CL=F") is None
+
+    def test_fresh_yfinance_bars_after_ib_failure_record_fallback(self, collector, mock_db):
+        collector._alpaca_api_key = None
+        collector._ib_enabled = True
+        with (
+            patch.object(collector, "_fetch_ibkr", return_value=[]),
+            patch.object(collector, "_fetch_yfinance", return_value=self._fresh_bar()),
+        ):
+            collector.fetch_bars("CL=F")
+        assert mock_db.state.get("ib_fallback:futures:CL=F") is not None
+
+    def test_stale_yfinance_bars_mean_market_closed_not_fallback(self, collector, mock_db):
+        # Market closed: IB has nothing in its last hour and yfinance only
+        # has yesterday's session. That isn't IB being broken.
+        collector._alpaca_api_key = None
+        collector._ib_enabled = True
+        with (
+            patch.object(collector, "_fetch_ibkr", return_value=[]),
+            patch.object(collector, "_fetch_yfinance",
+                         return_value=self._fresh_bar(minutes_ago=600)),
+        ):
+            collector.fetch_bars("CL=F")
+        assert mock_db.state.get("ib_fallback:futures:CL=F") is None
+
+    def test_nothing_recorded_when_ib_disabled(self, collector, mock_db):
+        collector._alpaca_api_key = None
+        collector._ib_enabled = False
+        with patch.object(collector, "_fetch_yfinance", return_value=self._fresh_bar()):
+            collector.fetch_bars("CL=F")
+        assert mock_db.state.get("ib_fallback:futures:CL=F") is None
+        assert mock_db.state.get("ib_ok:futures:CL=F") is None

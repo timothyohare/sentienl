@@ -420,3 +420,35 @@ class TestCompositePriceFetcher:
 
         fetcher = CompositePriceFetcher([Nope(), Nope()])
         assert fetcher.get_price("kalshi", "T1") is None
+
+
+class TestRandomWindowEffectSizesMatchesBruteForce:
+    """The vectorised implementation must pair samples exactly as the
+    original O(n^2) loop did (every i<j pair with gap in [h-tol, h+tol])."""
+
+    @staticmethod
+    def _brute_force(samples, horizon_minutes):
+        tol = horizon_minutes * 0.2
+        times = [datetime.fromisoformat(s["sampled_at"]) for s in samples]
+        out = []
+        for i in range(len(samples)):
+            for j in range(i + 1, len(samples)):
+                gap = (times[j] - times[i]).total_seconds() / 60
+                if horizon_minutes - tol <= gap <= horizon_minutes + tol:
+                    p1, p2 = samples[i]["price"], samples[j]["price"]
+                    out.append(abs(p2 - p1) / abs(p1))
+        return out
+
+    @pytest.mark.parametrize("horizon", [15, 60, 240])
+    def test_irregular_spacing_matches(self, horizon):
+        import random
+        rng = random.Random(42)
+        base = datetime(2026, 8, 1, tzinfo=UTC)
+        minutes, samples = 0.0, []
+        for _ in range(400):
+            minutes += rng.choice([1, 4, 5, 5, 5, 6, 30, 300])
+            samples.append({"price": 100 + rng.uniform(-5, 5),
+                            "sampled_at": (base + timedelta(minutes=minutes)).isoformat()})
+        fast = random_window_effect_sizes(samples, horizon)
+        assert sorted(fast) == pytest.approx(sorted(self._brute_force(samples, horizon)))
+        assert fast  # the fixture actually produces pairs
