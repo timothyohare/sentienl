@@ -153,3 +153,34 @@ def open_trades(
             )
             counts["opened"] += 1
     return counts
+
+
+def close_due_trades(
+    db: Database, cfg: PaperConfig, fetcher: PriceFetcherProtocol, now: datetime
+) -> dict[str, int]:
+    """Close every open trade whose horizon has passed at the current price.
+    A trade still unpriced expiry_grace_minutes after it fell due is marked
+    expired with no P&L, rather than closed later at an unrelated price."""
+    counts = {"closed": 0, "expired": 0}
+    prices = fetcher if isinstance(fetcher, _PassCache) else _PassCache(fetcher)
+    for trade in db.paper_trades.get_open(cfg.strategy):
+        overdue_seconds = (
+            (now - _parse_ts(trade["entry_at"])).total_seconds() - cfg.horizon_minutes * 60
+        )
+        if overdue_seconds < 0:
+            continue
+        price = prices.get_price(trade["source"], trade["instrument"])
+        if price is not None:
+            gross = trade["direction"] * (price - trade["entry_price"]) / trade["entry_price"]
+            db.paper_trades.update(
+                trade["id"], status="closed", exit_price=price, exit_at=now.isoformat(),
+                gross_ret=gross, net_ret=gross - trade["cost_ret"],
+            )
+            counts["closed"] += 1
+        elif overdue_seconds > cfg.expiry_grace_minutes * 60:
+            db.paper_trades.update(
+                trade["id"], status="expired", exit_at=now.isoformat(),
+                note=f"no exit price within {cfg.expiry_grace_minutes} min of due",
+            )
+            counts["expired"] += 1
+    return counts

@@ -7,7 +7,7 @@ import pytest
 
 from sentinel.core.config import PaperConfig, PaperCost
 from sentinel.core.db import Database
-from sentinel.paper.ledger import open_trades, round_trip_cost_ret
+from sentinel.paper.ledger import close_due_trades, open_trades, round_trip_cost_ret
 
 NOW = datetime(2026, 10, 27, 14, 0, tzinfo=UTC)
 MGC = PaperCost(tick_size=0.1, multiplier=10, commission_per_side=0.62, slippage_ticks=1)
@@ -213,3 +213,78 @@ class TestOpenTrades:
         _spike(db, minutes_ago=2)
         result = open_trades(db, cfg, FakeFetcher({"GC=F": 4001.0}), NOW)
         assert result == {"opened": 1, "skipped": 1}
+
+
+# ---------------------------------------------------------------------------
+# close_due_trades() — exit after the horizon, record gross/net, or expire
+# ---------------------------------------------------------------------------
+
+
+def _open_one(db, cfg, change=0.2, entry=4000.0):
+    """Open a gold trade at NOW and return its row."""
+    _start(db, cfg)
+    _spike(db, change=change)
+    open_trades(db, cfg, FakeFetcher({"GC=F": entry}), NOW)
+    return _trades(db)[0]
+
+
+class TestCloseDueTrades:
+    def test_short_with_falling_price_closes_with_positive_net(self, db, cfg):
+        trade = _open_one(db, cfg, change=0.2, entry=4000.0)
+        exit_at = NOW + timedelta(minutes=62)
+        result = close_due_trades(db, cfg, FakeFetcher({"GC=F": 3990.0}), exit_at)
+        [closed] = _trades(db)
+        assert result == {"closed": 1, "expired": 0}
+        assert closed["status"] == "closed"
+        assert closed["exit_price"] == 3990.0
+        assert closed["exit_at"] == exit_at.isoformat()
+        assert closed["gross_ret"] == pytest.approx(10 / 4000)
+        assert closed["net_ret"] == pytest.approx(10 / 4000 - trade["cost_ret"])
+
+    def test_long_with_falling_price_loses(self, db, cfg):
+        _open_one(db, cfg, change=-0.2, entry=4000.0)
+        close_due_trades(db, cfg, FakeFetcher({"GC=F": 3990.0}), NOW + timedelta(minutes=60))
+        assert _trades(db)[0]["gross_ret"] == pytest.approx(-10 / 4000)
+
+    def test_not_closed_before_horizon(self, db, cfg):
+        _open_one(db, cfg)
+        fetcher = FakeFetcher({"GC=F": 3990.0})
+        result = close_due_trades(db, cfg, fetcher, NOW + timedelta(minutes=59))
+        assert result == {"closed": 0, "expired": 0}
+        assert _trades(db)[0]["status"] == "open"
+        assert fetcher.calls == []
+
+    def test_no_price_within_grace_stays_open(self, db, cfg):
+        _open_one(db, cfg)
+        close_due_trades(db, cfg, FakeFetcher({}), NOW + timedelta(minutes=60 + 29))
+        assert _trades(db)[0]["status"] == "open"
+
+    def test_no_price_past_grace_expires_with_null_pnl(self, db, cfg):
+        _open_one(db, cfg)
+        at = NOW + timedelta(minutes=60 + 31)
+        result = close_due_trades(db, cfg, FakeFetcher({}), at)
+        [trade] = _trades(db)
+        assert result == {"closed": 0, "expired": 1}
+        assert trade["status"] == "expired"
+        assert trade["exit_at"] == at.isoformat()
+        assert (trade["exit_price"], trade["gross_ret"], trade["net_ret"]) == (None, None, None)
+        assert trade["note"] == "no exit price within 30 min of due"
+
+    def test_one_fetch_per_instrument(self, db, cfg):
+        _start(db, cfg)
+        _spike(db, minutes_ago=2)
+        _spike(db, minutes_ago=1, ticker="CL=F", source="futures_oil", price=60.0)
+        open_trades(db, cfg, FakeFetcher({"GC=F": 4000.0, "CL=F": 60.0}), NOW)
+        fetcher = FakeFetcher({"GC=F": 3990.0, "CL=F": 61.0})
+        assert close_due_trades(db, cfg, fetcher, NOW + timedelta(minutes=61))["closed"] == 2
+        assert sorted(fetcher.calls) == [("futures_gold", "GC=F"), ("futures_oil", "CL=F")]
+
+    def test_closed_position_frees_instrument_for_later_signal(self, db, cfg):
+        _open_one(db, cfg)
+        close_due_trades(db, cfg, FakeFetcher({"GC=F": 3990.0}), NOW + timedelta(minutes=61))
+        later = NOW + timedelta(minutes=70)
+        db.insert_signal("futures_gold", "volume_spike", "HIGH",
+                         {"ticker": "GC=F", "price": 3991.0, "price_change_pct": -0.1},
+                         "spike", created_at=(later - timedelta(minutes=1)).isoformat())
+        open_trades(db, cfg, FakeFetcher({"GC=F": 3992.0}), later)
+        assert [t["status"] for t in _trades(db)] == ["closed", "open"]
