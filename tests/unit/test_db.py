@@ -546,3 +546,19 @@ class TestFailedWriteLeavesNoOpenTransaction:
         assert db.execute_scalar("SELECT alerted FROM signals WHERE id=?", (signal_id,)) == 1
         blocker.close()
         db.close()
+
+
+class TestPaperTradesTable:
+    def test_one_row_per_signal_per_strategy(self, tmp_path):
+        import sqlite3
+        db = Database(str(tmp_path / "t.db"))
+        db.init()
+        row = {"signal_id": 1, "strategy": "fade60", "source": "futures_gold",
+               "signal_type": "volume_spike", "instrument": "GC=F",
+               "signal_at": "2026-10-27T00:00:00+00:00", "status": "skipped"}
+        db.paper_trades.insert(**row)
+        db.paper_trades.insert(**{**row, "strategy": "fade240"})
+        with pytest.raises(sqlite3.IntegrityError):
+            db.paper_trades.insert(**row)
+        assert not db._get_conn().in_transaction
+        db.close()

@@ -8,6 +8,7 @@ Provides a Database class with sub-accessors for each logical table:
   - db.price_tracking — PostPriceTracking (post-signal price history)
   - db.price_samples — PriceSamples (continuous price history, for the
     random-window signal-to-noise baseline)
+  - db.paper_trades — PaperTrades (simulated paper-trading ledger)
 
 WAL mode and synchronous=NORMAL are set on every connection open.
 """
@@ -76,6 +77,30 @@ CREATE TABLE IF NOT EXISTS price_samples (
 
 CREATE INDEX IF NOT EXISTS idx_price_samples_source_instrument
     ON price_samples (source, instrument);
+
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id    INTEGER NOT NULL REFERENCES signals(id),
+    strategy     TEXT    NOT NULL,
+    source       TEXT    NOT NULL,
+    signal_type  TEXT    NOT NULL,
+    instrument   TEXT    NOT NULL,
+    signal_at    TEXT    NOT NULL,
+    direction    INTEGER,
+    signal_price REAL,
+    entry_price  REAL,
+    entry_at     TEXT,
+    exit_price   REAL,
+    exit_at      TEXT,
+    gross_ret    REAL,
+    cost_ret     REAL,
+    net_ret      REAL,
+    status       TEXT    NOT NULL,
+    note         TEXT,
+    UNIQUE (signal_id, strategy)
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades (strategy, status);
 """
 
 _VALID_PRICE_COLUMNS = {"price_t0", "price_t15", "price_t60", "price_t240", "price_t1440"}
@@ -233,6 +258,78 @@ class PriceSamples:
         return [dict(r) for r in rows]
 
 
+class PaperTrades:
+    """Simulated paper-trading ledger rows (sentinel/paper/ledger.py). One row
+    per (signal, strategy): open, closed, expired or skipped."""
+
+    def __init__(self, conn_factory):
+        self._conn = conn_factory
+
+    def insert(self, **fields: Any) -> int:
+        """Insert a trade row from column=value pairs. Returns the new id."""
+        columns = ", ".join(fields)
+        placeholders = ", ".join("?" * len(fields))
+        conn = self._conn()
+        with conn:
+            cursor = conn.execute(
+                f"INSERT INTO paper_trades ({columns}) VALUES ({placeholders})",
+                tuple(fields.values()),
+            )
+        assert cursor.lastrowid is not None
+        return cursor.lastrowid
+
+    def update(self, trade_id: int, **fields: Any) -> None:
+        """Set column=value pairs on one trade."""
+        assignments = ", ".join(f"{column}=?" for column in fields)
+        conn = self._conn()
+        with conn:
+            conn.execute(
+                f"UPDATE paper_trades SET {assignments} WHERE id=?",
+                (*fields.values(), trade_id),
+            )
+
+    def get_open(self, strategy: str) -> list[dict[str, Any]]:
+        """Open trades for a strategy, oldest first."""
+        rows = self._conn().execute(
+            "SELECT * FROM paper_trades WHERE strategy=? AND status='open' ORDER BY id",
+            (strategy,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_positions(self, strategy: str, instrument: str) -> list[dict[str, Any]]:
+        """Every trade that held a position (not skipped) on an instrument."""
+        rows = self._conn().execute(
+            "SELECT * FROM paper_trades WHERE strategy=? AND instrument=? "
+            "AND status != 'skipped' ORDER BY id",
+            (strategy, instrument),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def new_signals(
+        self, strategy: str, since: str, rules: list[tuple[str, str]]
+    ) -> list[dict[str, Any]]:
+        """Signals created at or after `since`, matching any (source GLOB
+        pattern, signal_type) rule, that have no row for this strategy yet.
+        Oldest first, payload decoded."""
+        if not rules:
+            return []
+        match = " OR ".join("(s.source GLOB ? AND s.signal_type = ?)" for _ in rules)
+        params = [value for rule in rules for value in rule]
+        rows = self._conn().execute(
+            f"SELECT s.* FROM signals s WHERE s.created_at >= ? AND ({match}) "
+            "AND NOT EXISTS (SELECT 1 FROM paper_trades p "
+            "                WHERE p.signal_id = s.id AND p.strategy = ?) "
+            "ORDER BY s.created_at, s.id",
+            (since, *params, strategy),
+        ).fetchall()
+        result = []
+        for r in rows:
+            row = dict(r)
+            row["payload"] = json.loads(row["payload"])
+            result.append(row)
+        return result
+
+
 class Database:
     """
     Central SQLite access layer.
@@ -253,6 +350,7 @@ class Database:
         self.wallet_cache = WalletCache(self._get_conn)
         self.price_tracking = PostPriceTracking(self._get_conn)
         self.price_samples = PriceSamples(self._get_conn)
+        self.paper_trades = PaperTrades(self._get_conn)
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
