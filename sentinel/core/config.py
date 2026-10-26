@@ -195,6 +195,33 @@ class DashboardConfig:
 
 
 @dataclass
+class PaperCost:
+    """Per-instrument trading cost for the paper ledger. Futures set
+    tick_size/multiplier/commission_per_side; ASX sets commission_pct/
+    commission_min/notional (a fixed position size in AUD)."""
+    tick_size: float = 0.0
+    multiplier: float = 1.0
+    commission_per_side: float = 0.0
+    commission_pct: float = 0.0
+    commission_min: float = 0.0
+    slippage_ticks: float = 0.0
+    notional: float | None = None
+
+
+@dataclass
+class PaperConfig:
+    """Simulated paper-trading ledger (tasks/plan.md). `signals` entries are
+    "source_glob:signal_type", e.g. "futures_*:volume_spike"."""
+    enabled: bool = False
+    strategy: str = "fade60"
+    horizon_minutes: int = 60
+    max_entry_delay_minutes: int = 15
+    expiry_grace_minutes: int = 30
+    signals: list[str] = field(default_factory=list)
+    costs: dict[str, PaperCost] = field(default_factory=dict)
+
+
+@dataclass
 class Config:
     truth_social: TruthSocialConfig
     polymarket: PolymarketConfig
@@ -204,6 +231,7 @@ class Config:
     alerts: AlertsConfig
     database: DatabaseConfig
     dashboard: DashboardConfig
+    paper: PaperConfig = field(default_factory=PaperConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +480,42 @@ def _parse_dashboard(data: dict) -> DashboardConfig:
     )
 
 
+def _parse_paper(data: dict) -> PaperConfig:
+    sec = "paper"
+    signals = [str(rule) for rule in data.get("signals", [])]
+    for rule in signals:
+        if ":" not in rule:
+            raise ConfigValidationError(
+                f"'{sec}.signals' entries must be 'source:signal_type', got {rule!r}"
+            )
+    costs = {}
+    for ticker, raw in (data.get("costs") or {}).items():
+        notional = raw.get("notional")
+        cost = PaperCost(
+            tick_size=float(raw.get("tick_size", 0.0)),
+            multiplier=float(raw.get("multiplier", 1.0)),
+            commission_per_side=float(raw.get("commission_per_side", 0.0)),
+            commission_pct=float(raw.get("commission_pct", 0.0)),
+            commission_min=float(raw.get("commission_min", 0.0)),
+            slippage_ticks=float(raw.get("slippage_ticks", 0.0)),
+            notional=float(notional) if notional is not None else None,
+        )
+        if cost.multiplier <= 0 or (cost.notional is not None and cost.notional <= 0):
+            raise ConfigValidationError(
+                f"'{sec}.costs.{ticker}' multiplier and notional must be positive"
+            )
+        costs[str(ticker)] = cost
+    return PaperConfig(
+        enabled=bool(data.get("enabled", False)),
+        strategy=str(data.get("strategy", "fade60")),
+        horizon_minutes=int(data.get("horizon_minutes", 60)),
+        max_entry_delay_minutes=int(data.get("max_entry_delay_minutes", 15)),
+        expiry_grace_minutes=int(data.get("expiry_grace_minutes", 30)),
+        signals=signals,
+        costs=costs,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -484,6 +548,7 @@ def load_config(path: str) -> Config:
         alerts=_parse_alerts(raw.get("alerts", {})),
         database=_parse_database(raw.get("database", {})),
         dashboard=_parse_dashboard(raw.get("dashboard", {})),
+        paper=_parse_paper(raw.get("paper") or {}),
     )
     logger.info("Config loaded from %s", path)
     return cfg

@@ -992,3 +992,63 @@ class TestDistinctValues:
     def test_dashboard(self, distinct_config):
         assert distinct_config.dashboard.host == "0.0.0.0"
         assert distinct_config.dashboard.port == 9999
+
+
+# ---------------------------------------------------------------------------
+# paper: section — simulated ledger (tasks/plan.md)
+# ---------------------------------------------------------------------------
+
+PAPER_CONFIG_YAML = MINIMAL_CONFIG_YAML + textwrap.dedent("""\
+
+    paper:
+      enabled: true
+      strategy: fade99
+      horizon_minutes: 45
+      max_entry_delay_minutes: 7
+      expiry_grace_minutes: 25
+      signals: ["futures_*:volume_spike", "asx:price_move"]
+      costs:
+        GC=F: {tick_size: 0.1, multiplier: 10, commission_per_side: 0.62, slippage_ticks: 1}
+        CBA.AX: {tick_size: 0.01, commission_pct: 0.08, commission_min: 6, notional: 5000}
+""")
+
+
+class TestPaperConfig:
+    def test_missing_section_disables_ledger(self, minimal_config):
+        p = minimal_config.paper
+        assert p.enabled is False
+        assert p.strategy == "fade60"
+        assert p.horizon_minutes == 60
+        assert p.max_entry_delay_minutes == 15
+        assert p.expiry_grace_minutes == 30
+        assert p.signals == []
+        assert p.costs == {}
+
+    def test_parses_every_field(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text(PAPER_CONFIG_YAML)
+        p = load_config(str(path)).paper
+        assert p.enabled is True
+        assert p.strategy == "fade99"
+        assert p.horizon_minutes == 45
+        assert p.max_entry_delay_minutes == 7
+        assert p.expiry_grace_minutes == 25
+        assert p.signals == ["futures_*:volume_spike", "asx:price_move"]
+        gold = p.costs["GC=F"]
+        assert (gold.tick_size, gold.multiplier, gold.commission_per_side,
+                gold.slippage_ticks, gold.notional) == (0.1, 10.0, 0.62, 1.0, None)
+        cba = p.costs["CBA.AX"]
+        assert (cba.commission_pct, cba.commission_min, cba.notional,
+                cba.multiplier) == (0.08, 6.0, 5000.0, 1.0)
+
+    def test_signal_rule_without_colon_rejected(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text(MINIMAL_CONFIG_YAML + "\npaper:\n  signals: [volume_spike]\n")
+        with pytest.raises(ConfigValidationError, match="source:signal_type"):
+            load_config(str(path))
+
+    def test_non_positive_multiplier_rejected(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text(MINIMAL_CONFIG_YAML + "\npaper:\n  costs:\n    X: {multiplier: 0}\n")
+        with pytest.raises(ConfigValidationError, match="multiplier"):
+            load_config(str(path))
