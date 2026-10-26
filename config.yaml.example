@@ -146,3 +146,16 @@ database:
 dashboard:
   host: "127.0.0.1"
   port: 5000
+
+# Simulated paper-trading ledger (tasks/plan.md), run by price_followup.py.
+# Fades each matching signal's bar move, closes after horizon_minutes, and
+# records net-of-cost returns in paper_trades. Disabled when omitted.
+paper:
+  enabled: false
+  strategy: fade60
+  horizon_minutes: 60
+  max_entry_delay_minutes: 15
+  expiry_grace_minutes: 30
+  signals: ["futures_*:volume_spike"]
+  costs:
+    GC=F: {tick_size: 0.1, multiplier: 10, commission_per_side: 0.62, slippage_ticks: 1}  # MGC

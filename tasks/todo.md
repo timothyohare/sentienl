@@ -3,10 +3,10 @@
 See `tasks/plan.md` for the details, acceptance criteria and pre-registration.
 
 ## Phase 1: Futures fade, end to end
-- [ ] Task 1: `paper:` config section and cost model (S)
-- [ ] Task 2: `paper_trades` table; open fade trades from new futures signals (M)
-- [ ] Task 3: Close due trades with net P&L, and expire unpriceable ones (S)
-- [ ] Task 4: Wire into the `price_followup.py` loop; restart the service; verify live rows (S)
+- [x] Task 1: `paper:` config section and cost model (S)
+- [x] Task 2: `paper_trades` table; open fade trades from new futures signals (M)
+- [x] Task 3: Close due trades with net P&L, and expire unpriceable ones (S)
+- [x] Task 4: Wire into the `price_followup.py` loop; restart the service; verify live rows (S)
 
 ### Checkpoint: futures ledger live (human review of the first ~20 trades)
 

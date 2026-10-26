@@ -7,7 +7,12 @@ import pytest
 
 from sentinel.core.config import PaperConfig, PaperCost
 from sentinel.core.db import Database
-from sentinel.paper.ledger import close_due_trades, open_trades, round_trip_cost_ret
+from sentinel.paper.ledger import (
+    close_due_trades,
+    open_trades,
+    round_trip_cost_ret,
+    run_ledger,
+)
 
 NOW = datetime(2026, 10, 27, 14, 0, tzinfo=UTC)
 MGC = PaperCost(tick_size=0.1, multiplier=10, commission_per_side=0.62, slippage_ticks=1)
@@ -287,4 +292,23 @@ class TestCloseDueTrades:
                          {"ticker": "GC=F", "price": 3991.0, "price_change_pct": -0.1},
                          "spike", created_at=(later - timedelta(minutes=1)).isoformat())
         open_trades(db, cfg, FakeFetcher({"GC=F": 3992.0}), later)
+        assert [t["status"] for t in _trades(db)] == ["closed", "open"]
+
+
+# ---------------------------------------------------------------------------
+# run_ledger() — one pass: close, then open, sharing one price per instrument
+# ---------------------------------------------------------------------------
+
+
+class TestRunLedger:
+    def test_closes_then_opens_with_one_fetch_per_instrument(self, db, cfg):
+        _open_one(db, cfg)
+        later = NOW + timedelta(minutes=61)
+        db.insert_signal("futures_gold", "volume_spike", "HIGH",
+                         {"ticker": "GC=F", "price": 3991.0, "price_change_pct": 0.1},
+                         "spike", created_at=(later - timedelta(minutes=1)).isoformat())
+        fetcher = FakeFetcher({"GC=F": 3990.0})
+        result = run_ledger(db, cfg, fetcher, later)
+        assert result == {"closed": 1, "expired": 0, "opened": 1, "skipped": 0}
+        assert fetcher.calls == [("futures_gold", "GC=F")]
         assert [t["status"] for t in _trades(db)] == ["closed", "open"]

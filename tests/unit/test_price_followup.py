@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from sentinel.core.config import PaperConfig, PaperCost
 from sentinel.core.db import Database
 from sentinel.scripts.price_followup import (
     AsxPriceFetcher,
@@ -19,6 +20,7 @@ from sentinel.scripts.price_followup import (
     group_by_instrument,
     random_window_effect_sizes,
     run_once,
+    run_pass,
     sample_baseline_prices,
 )
 
@@ -452,3 +454,47 @@ class TestRandomWindowEffectSizesMatchesBruteForce:
         fast = random_window_effect_sizes(samples, horizon)
         assert sorted(fast) == pytest.approx(sorted(self._brute_force(samples, horizon)))
         assert fast  # the fixture actually produces pairs
+
+
+# ---------------------------------------------------------------------------
+# run_pass() — paper ledger step alongside backfill and baseline sampling
+# ---------------------------------------------------------------------------
+
+PAPER = PaperConfig(
+    enabled=True,
+    signals=["futures_*:volume_spike"],
+    costs={"GC=F": PaperCost(tick_size=0.1, multiplier=10)},
+)
+
+
+def _tracked_gold_signal(db) -> int:
+    sid = db.insert_signal(
+        source="futures_gold", signal_type="volume_spike", priority="HIGH",
+        payload={"ticker": "GC=F", "price": 2400.0, "price_change_pct": 0.1},
+        summary="x", created_at=_iso(20),
+    )
+    db.price_tracking.insert(sid, "futures_gold", "GC=F", price_t0=2400.0)
+    db.execute("UPDATE post_price_tracking SET created_at=?", (_iso(20),))
+    return sid
+
+
+class TestRunPass:
+    def test_ledger_failure_does_not_stop_backfill_or_sampling(self, mock_db, caplog):
+        _tracked_gold_signal(mock_db)
+        fetcher = FakeFetcher({("futures_gold", "GC=F"): 2410.0})
+        with patch("sentinel.scripts.price_followup.run_ledger",
+                   side_effect=RuntimeError("boom")):
+            updated, sampled, ledger = run_pass(mock_db, fetcher, PAPER)
+        assert (updated, sampled, ledger) == (1, 1, None)
+        assert "Paper ledger step failed: boom" in caplog.text
+
+    def test_enabled_ledger_runs(self, mock_db):
+        fetcher = FakeFetcher({})
+        _, _, ledger = run_pass(mock_db, fetcher, PAPER)
+        assert ledger == {"closed": 0, "expired": 0, "opened": 0, "skipped": 0}
+        assert mock_db.state.get("paper_ledger:fade60:start_at") is not None
+
+    def test_disabled_ledger_does_nothing(self, mock_db):
+        _, _, ledger = run_pass(mock_db, FakeFetcher({}), PaperConfig(enabled=False))
+        assert ledger is None
+        assert mock_db.state.get("paper_ledger:fade60:start_at") is None

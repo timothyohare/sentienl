@@ -40,8 +40,9 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from sentinel.collectors.kalshi import KALSHI_API_BASE
-from sentinel.core.config import load_config
+from sentinel.core.config import PaperConfig, load_config
 from sentinel.core.db import Database
+from sentinel.paper.ledger import run_ledger
 
 logging.basicConfig(
     level=logging.INFO,
@@ -323,6 +324,32 @@ def sample_baseline_prices(db: Database, fetcher: PriceFetcherProtocol) -> int:
     return sampled
 
 
+def run_pass(
+    db: Database, fetcher: PriceFetcherProtocol, paper: PaperConfig
+) -> tuple[int, int, dict[str, int] | None]:
+    """One loop pass: the paper ledger (first, so entries are as close to the
+    signal as possible), then backfill, then baseline sampling. A ledger
+    failure is logged and never blocks the other two."""
+    ledger = None
+    if paper.enabled:
+        try:
+            ledger = run_ledger(db, paper, fetcher)
+        except Exception as exc:
+            logger.error("Paper ledger step failed: %s", exc)
+    updated = run_once(db, fetcher)
+    sampled = sample_baseline_prices(db, fetcher)
+    return updated, sampled, ledger
+
+
+def _log_pass(updated: int, sampled: int, ledger: dict[str, int] | None) -> None:
+    if updated or sampled:
+        logger.info("Backfilled %d price column(s), sampled %d baseline price(s)",
+                    updated, sampled)
+    if ledger and any(ledger.values()):
+        logger.info("Paper ledger: opened %(opened)d, skipped %(skipped)d, "
+                    "closed %(closed)d, expired %(expired)d", ledger)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Sentinel post-signal price follow-through backfill"
@@ -352,21 +379,14 @@ def main():
     fetcher = CompositePriceFetcher([KalshiPriceFetcher(), futures_fetcher, asx_fetcher])
 
     if args.once:
-        updated = run_once(db, fetcher)
-        sampled = sample_baseline_prices(db, fetcher)
-        logger.info("Backfilled %d price column(s), sampled %d baseline price(s)",
-                    updated, sampled)
+        _log_pass(*run_pass(db, fetcher, cfg.paper))
         db.close()
         return
 
     logger.info("Price follow-through backfill starting up (interval=%ds)", args.interval)
     while True:
         try:
-            updated = run_once(db, fetcher)
-            sampled = sample_baseline_prices(db, fetcher)
-            if updated or sampled:
-                logger.info("Backfilled %d price column(s), sampled %d baseline price(s)",
-                            updated, sampled)
+            _log_pass(*run_pass(db, fetcher, cfg.paper))
         except Exception as exc:
             logger.error("Backfill pass failed: %s", exc)
         time_module.sleep(args.interval)

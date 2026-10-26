@@ -1,6 +1,7 @@
 # Implementation Plan: Simulated Paper-Trading Ledger
 
-Status: **draft for review** (2026-10-24). No code written yet.
+Status: **Phase 1 live** (2026-10-26). Ledger start (forward-only cursor):
+2026-10-26T10:32:41Z. Open questions answered with the defaults below.
 
 ## Overview
 
@@ -30,6 +31,11 @@ new strategy name and a fresh sample.
   Anything else is a fail, and the result is recorded either way.
 - Historical (pre-start) signals are never opened, so nothing in the
   evaluation is in-sample.
+- Added during the build (2026-10-26, before the first trade): a signal with no
+  entry price within **15 minutes** is skipped, and an instrument counts as
+  held from the earlier trade's signal time until its **entry + 60 min** (the
+  nominal exit, so the loop's 5-minute close timing can't change which
+  signals are skipped).
 
 ## Architecture Decisions
 

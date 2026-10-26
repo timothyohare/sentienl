@@ -13,12 +13,13 @@ strategy name):
     max_entry_delay_minutes, else skipped. The payload's own price is the
     trigger bar's close (stale on yfinance), kept only as signal_price.
   - one position per instrument: a signal arriving while an earlier trade
-    on that instrument is still held is skipped, not stacked.
+    on that instrument is held (from its signal to entry + horizon) is
+    skipped, not stacked.
   - signals created before the strategy's first run are never traded.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from sentinel.core.config import PaperConfig, PaperCost
@@ -79,15 +80,16 @@ def _bar_change(payload: dict[str, Any]) -> float | None:
 
 
 def _holding_trade(
-    positions: list[dict[str, Any]], signal_at: datetime
+    positions: list[dict[str, Any]], signal_at: datetime, horizon_minutes: int
 ) -> dict[str, Any] | None:
     """The trade (if any) holding the instrument when a signal arrived. A
     position counts from its own signal time, so two signals handled in the
-    same pass can't both open."""
+    same pass can't both open, until its nominal exit (entry + horizon), so
+    the loop's close timing can't change which signals are skipped."""
     for trade in positions:
         held_from = _parse_ts(trade["signal_at"])
-        held_to = _parse_ts(trade["exit_at"]) if trade["exit_at"] else None
-        if held_from <= signal_at and (held_to is None or signal_at < held_to):
+        held_to = _parse_ts(trade["entry_at"]) + timedelta(minutes=horizon_minutes)
+        if held_from <= signal_at < held_to:
             return trade
     return None
 
@@ -128,7 +130,7 @@ def open_trades(
         change = _bar_change(payload)
         cost = cfg.costs.get(instrument)
         holder = _holding_trade(db.paper_trades.get_positions(cfg.strategy, instrument),
-                                signal_at)
+                                signal_at, cfg.horizon_minutes)
         if change is None:
             skip("no bar change in payload")
         elif change == 0:
@@ -184,3 +186,14 @@ def close_due_trades(
             )
             counts["expired"] += 1
     return counts
+
+
+def run_ledger(
+    db: Database, cfg: PaperConfig, fetcher: PriceFetcherProtocol,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """One ledger pass: close due trades, then open new ones. Both steps
+    share one fetched price per instrument."""
+    now = now or datetime.now(UTC)
+    prices = _PassCache(fetcher)
+    return {**close_due_trades(db, cfg, prices, now), **open_trades(db, cfg, prices, now)}
