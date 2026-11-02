@@ -37,6 +37,13 @@ STATE_KEY_VOLUME_SPIKE = "kalshi_vol_spike_{ticker}"
 
 DEFAULT_BACKOFF = [30, 60, 120, 300]
 
+# HTTP 429 handling: retry a throttled request a couple of times instead of
+# silently dropping that market for the whole poll cycle. Retry-After is
+# honoured but capped so one throttled call can't stall the loop for minutes.
+RATE_LIMIT_RETRIES = 2
+RATE_LIMIT_DEFAULT_SLEEP = 1.0
+RATE_LIMIT_MAX_SLEEP = 10.0
+
 
 # ---------------------------------------------------------------------------
 # Signal detection helpers (pure functions, easily testable)
@@ -107,6 +114,19 @@ class KalshiCollector:
     # API fetching
     # ------------------------------------------------------------------
 
+    def _get(self, url: str, params: dict[str, Any] | None = None) -> Any:
+        """GET with retry on HTTP 429. Returns the last response."""
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            resp = self._client.get(url, params=params)
+            if resp.status_code != 429 or attempt == RATE_LIMIT_RETRIES:
+                return resp
+            try:
+                delay = float(resp.headers.get("Retry-After"))
+            except (TypeError, ValueError):
+                delay = RATE_LIMIT_DEFAULT_SLEEP
+            time.sleep(min(max(delay, 0.0), RATE_LIMIT_MAX_SLEEP))
+        return resp  # unreachable; keeps mypy happy
+
     def fetch_event_markets(self, event_ticker: str) -> list[dict[str, Any]]:
         """
         Fetch all open markets for a given event ticker.
@@ -114,7 +134,7 @@ class KalshiCollector:
         """
         url = f"{self._api_base}/markets"
         try:
-            resp = self._client.get(
+            resp = self._get(
                 url, params={"event_ticker": event_ticker, "status": "open", "limit": 100}
             )
             if resp.status_code == 200:
@@ -135,9 +155,7 @@ class KalshiCollector:
         """
         url = f"{self._api_base}/markets/trades"
         try:
-            resp = self._client.get(
-                url, params={"ticker": ticker, "limit": limit}
-            )
+            resp = self._get(url, params={"ticker": ticker, "limit": limit})
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("trades", [])
@@ -194,7 +212,7 @@ class KalshiCollector:
         """
         url = f"{self._api_base}/markets/{ticker}"
         try:
-            resp = self._client.get(url)
+            resp = self._get(url)
             if resp.status_code == 200:
                 return resp.json().get("market")
             logger.warning("Kalshi market API returned HTTP %d for %r",

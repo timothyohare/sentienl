@@ -12,6 +12,9 @@ import pytest
 
 from sentinel.collectors.kalshi import (
     KALSHI_API_BASE,
+    RATE_LIMIT_DEFAULT_SLEEP,
+    RATE_LIMIT_MAX_SLEEP,
+    RATE_LIMIT_RETRIES,
     KalshiCollector,
     _calculate_volume_spike,
     _is_large_bet,
@@ -738,3 +741,74 @@ class TestKalshiInit:
 
     def test_consecutive_errors_starts_zero(self, collector):
         assert collector._consecutive_errors == 0
+
+
+# ---------------------------------------------------------------------------
+# 429 rate-limit retry (added 2026-11-03 — midterm events pushed the 429 rate
+# from ~17% to ~33%, silently dropping markets for a whole poll cycle)
+# ---------------------------------------------------------------------------
+
+def _mock_429(retry_after=None):
+    resp = _mock_response(429)
+    resp.headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    return resp
+
+
+class TestRateLimitRetry:
+    @pytest.fixture(autouse=True)
+    def _no_sleep(self, monkeypatch):
+        self.sleeps = []
+        monkeypatch.setattr("sentinel.collectors.kalshi.time.sleep", self.sleeps.append)
+
+    def test_trades_retries_after_429_then_succeeds(self, collector):
+        collector._client.get = MagicMock(side_effect=[
+            _mock_429(), _mock_response(200, {"trades": [{"trade_id": "t1"}]}),
+        ])
+        assert collector.fetch_recent_trades("X") == [{"trade_id": "t1"}]
+        assert collector._client.get.call_count == 2
+        assert len(self.sleeps) == 1
+
+    def test_event_markets_retries_after_429(self, collector):
+        collector._client.get = MagicMock(side_effect=[
+            _mock_429(), _mock_response(200, {"markets": [{"ticker": "M"}]}),
+        ])
+        assert collector.fetch_event_markets("E") == [{"ticker": "M"}]
+
+    def test_market_retries_after_429(self, collector):
+        collector._client.get = MagicMock(side_effect=[
+            _mock_429(), _mock_response(200, {"market": {"ticker": "M"}}),
+        ])
+        assert collector.fetch_market("M") == {"ticker": "M"}
+
+    def test_honours_retry_after_header(self, collector):
+        collector._client.get = MagicMock(side_effect=[
+            _mock_429("3"), _mock_response(200, {"trades": []}),
+        ])
+        collector.fetch_recent_trades("X")
+        assert self.sleeps == [3.0]
+
+    def test_retry_after_is_capped(self, collector):
+        collector._client.get = MagicMock(side_effect=[
+            _mock_429("600"), _mock_response(200, {"trades": []}),
+        ])
+        collector.fetch_recent_trades("X")
+        assert self.sleeps == [RATE_LIMIT_MAX_SLEEP]
+
+    def test_unparseable_retry_after_uses_default(self, collector):
+        collector._client.get = MagicMock(side_effect=[
+            _mock_429("soon"), _mock_response(200, {"trades": []}),
+        ])
+        collector.fetch_recent_trades("X")
+        assert self.sleeps == [RATE_LIMIT_DEFAULT_SLEEP]
+
+    def test_gives_up_after_max_retries(self, collector):
+        collector._client.get = MagicMock(return_value=_mock_429())
+        assert collector.fetch_recent_trades("X") == []
+        assert collector._client.get.call_count == RATE_LIMIT_RETRIES + 1
+        assert len(self.sleeps) == RATE_LIMIT_RETRIES
+
+    def test_non_429_error_is_not_retried(self, collector):
+        collector._client.get = MagicMock(return_value=_mock_response(500))
+        assert collector.fetch_recent_trades("X") == []
+        assert collector._client.get.call_count == 1
+        assert self.sleeps == []
