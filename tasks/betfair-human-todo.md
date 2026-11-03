@@ -20,9 +20,11 @@ are in `plans/06-betfair-exchange.md`.
 - [ ] **H3: Read Betfair's API / developer terms.** Confirm personal,
       non-commercial, read-only use is allowed. Record the answer in plan §1.3.
       → unblocks Checkpoint 0
-- [ ] **H4 (only if S1 says cert login is needed): Upload a cert.** The agent
-      generates a self-signed cert and key. You upload the `.crt` in Betfair
-      account security settings. → unblocks S1/Task 2
+- [ ] **H4: Upload the cert.** The agent generated it 2026-11-03. On desktop,
+      open `https://myaccount.betfair.com.au/accountdetails/mysecurity?showAPI=1`
+      → Automated Betting Program Access → upload
+      `~/.config/sentinel/betfair/client-2048.crt` (the **.crt**, never the .key).
+      Expires 2027-11-03. → unblocks cert login in S1/Task 2
 - [ ] **H5: Put credentials in `.env`** with the `betfair_` prefix only:
       `betfair_username=`, `betfair_password=`, `betfair_app_key=`
       (+ `betfair_cert_path=` if H4). Don't reuse bare `username=`/`password=`
@@ -31,7 +33,7 @@ are in `plans/06-betfair-exchange.md`.
 ## Decisions
 - [ ] **H6: Scope.** Politics first (plan default), racing first, or both?
       Which events/meetings?
-- [ ] **H7: Live key.** After S1 measures the delayed key's delay, decide
+- [x] **H7: Live key.** *(Answered by Betfair's docs: live keys can't be used read-only, and cost £499. Stay on delayed.)* After S1 measures the delayed key's delay, decide
       whether to pay for a live key (check Betfair's current AU price), or stay
       on delayed data.
 - [ ] Open question: should racing signals ever reach the alerter once

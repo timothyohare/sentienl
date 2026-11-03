@@ -276,6 +276,30 @@ login → `listMarketBook` returned plain dicts. The request carried
   guard test greps `sentinel/` for those names, so the wrapper can never
   call them.
 
+### 4.2 Docs findings (2026-11-03, from Betfair's Application Keys and Non-Interactive login pages)
+
+- **The delayed key does not return `totalMatched` from `listMarketBook`.** It
+  also returns only 3 price levels and no `EX_ALL_OFFERS`, and the delay is
+  "variable between 1-180 second snapshots". That **breaks D6
+  (`matched_surge`) and the `volume_spike` baseline as designed**. S2 must
+  check whether `EX_TRADED`/`tradedVolume` comes back on the delayed key. If
+  it doesn't, v1 is `odds_move` only, and Task 5 shrinks or is dropped.
+- **There's no live key for Sentinel.** Betfair says "read-only access using
+  the Live App Key isn't permitted". It also costs £499 and needs full KYC.
+  Since D1/§1.3 makes Sentinel read-only, **H7 is effectively answered: we
+  stay on the delayed key.** Racing just before the jump (where seconds
+  matter) is therefore weak. That favours politics-first (H6 default).
+- **AU endpoints:** cert login is `https://identitysso-cert.betfair.com.au/api/certlogin`.
+  The account security page is `myaccount.betfair.com.au/accountdetails/mysecurity?showAPI=1`.
+  2FA doesn't affect cert login.
+- App names must be unique (`APP_KEY_CREATION_FAILED`) and must not contain
+  your username (`UNEXPECTED_ERROR`). Each account gets one app with a
+  delayed and a live version.
+- `INVALID_APP_KEY` on a newly created delayed key isn't documented. The
+  stated prerequisite, "funded and fully verified", is the leading suspect.
+- Cert created 2026-11-03 at `~/.config/sentinel/betfair/client-2048.{crt,key}`
+  (outside the repo, key mode 600, **expires 2027-11-03**: renew before then).
+
 **Go/no-go after Phase 0:** stop if S1 finds automated access needs a paid
 live key Tim won't buy *and* the delayed key is unusable. Also stop if S2/S3
 show that markets which pass the liquidity guard almost never produce signals.
