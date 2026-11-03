@@ -5,10 +5,16 @@ decision. The agent can't do them. Each one lists what it unblocks. Details
 are in `plans/06-betfair-exchange.md`.
 
 ## Before any spike can run
-- [ ] **H1: Betfair Australia account.** Sign up or log in at betfair.com.au
+- [ ] **H1: Betfair Australia account.** *(2026-11-03: account created, login
+      works, but every API call returns `INVALID_APP_KEY`, probably until
+      identity verification and/or a first deposit is done. Check the account
+      status page.)* Sign up or log in at betfair.com.au
       and finish identity verification. Check whether API access needs a
       funded account. → unblocks S1, S3
-- [ ] **H2: Delayed (free) app key.** While logged in, create a developer app
+- [x] **H2: Delayed (free) app key.** *(Done 2026-11-03: app
+      `sentinel-88ba46`, delayed version active, saved to `.env` as
+      `betfair_app_key`. The name `sentinel` was taken: app names are unique
+      across Betfair.)* While logged in, create a developer app
       key (Betfair's "Accounts API Visualiser" → `createDeveloperAppKeys`).
       Copy the *delayed* key. → unblocks S1
 - [ ] **H3: Read Betfair's API / developer terms.** Confirm personal,

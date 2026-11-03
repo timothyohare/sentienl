@@ -9,7 +9,7 @@ first, and the change is committed and pushed.
 
 ## Phase 0: Spikes
 - [x] S4: Library choice → `betfairlightweight==2.24.0`, lightweight mode, explicit URIs (done 2026-11-03; plan §4.1)
-- [ ] S1: Auth, endpoint, session TTL, delayed-key delay (2h). Blocked on H1, H2, (H4)
+- [ ] S1: Auth, endpoint, session TTL, delayed-key delay (2h). **Partial:** interactive login via `identitysso.betfair.com.au` works for a bot (no cert needed so far); data calls blocked by `INVALID_APP_KEY` pending H1
 - [ ] S2: Capture fixtures, confirm event type IDs, weight limit, markets per racing day (2h). Blocked on S1
 - [ ] S3: Historical data check: Melbourne Cup 2026 + one politics market (2h). Blocked on H1
 - [ ] S5 (optional): Betfair vs Kalshi lead/lag on the US midterms (2h). Blocked on S3
