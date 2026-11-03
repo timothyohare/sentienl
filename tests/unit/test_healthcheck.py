@@ -161,3 +161,19 @@ class TestIbFallbacks:
     def test_fallback_outside_window_is_ignored(self, db):
         self._set(db, "ib_fallback:futures:CL=F", 120)
         assert ib_fallbacks(db, window_minutes=30) == []
+
+
+class TestBetfairHealth:
+    def test_betfair_unit_is_monitored(self):
+        assert MONITORED_UNITS["betfair_politics"] == "sentinel-betfair.service"
+
+    def test_login_lockout_is_down_even_when_unit_active(self, db):
+        db.state.set("betfair_login_locked_out", "2026-11-03T12:00:00+00:00")
+        _insert_signal(db, "betfair_politics", datetime.now(UTC))
+        results = check_health(db, 30, FakeUnitChecker())
+        assert results["betfair_politics"]["status"] == "DOWN"
+        assert results["betfair_politics"]["reason"] == "login locked out"
+
+    def test_no_lockout_is_not_down(self, db):
+        results = check_health(db, 30, FakeUnitChecker())
+        assert results["betfair_politics"]["status"] == "QUIET"

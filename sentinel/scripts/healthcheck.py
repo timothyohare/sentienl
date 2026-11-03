@@ -76,6 +76,13 @@ MONITORED_UNITS: dict[str, str] = {
     "kalshi": "sentinel-kalshi.service",
     "futures_oil": "sentinel-futures.service",
     "asx": "sentinel-asx.service",
+    "betfair_politics": "sentinel-betfair.service",
+}
+
+# A db.state key that, when set, makes the source DOWN even though its unit is
+# active (the process stays up but idle, e.g. after a Betfair login lockout).
+DOWN_STATE_KEYS: dict[str, tuple[str, str]] = {
+    "betfair_politics": ("betfair_login_locked_out", "login locked out"),
 }
 
 STALE_THRESHOLD_MINUTES = 30  # a live unit with no signals in this long is QUIET
@@ -137,7 +144,12 @@ def check_health(
             (source, cutoff),
         ) or 0
 
-        if not unit_active:
+        reason = None
+        down_key = DOWN_STATE_KEYS.get(source)
+        if down_key and db.state.get(down_key[0]):
+            reason = down_key[1]
+
+        if not unit_active or reason:
             status = "DOWN"
         elif count > 0:
             status = "OK"
@@ -150,6 +162,7 @@ def check_health(
             "unit_active": unit_active,
             "signals_in_window": count,
             "window_minutes": stale_threshold_minutes,
+            "reason": reason,
         }
 
     return results
