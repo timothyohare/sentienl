@@ -41,6 +41,8 @@ class CorrelationDetector:
         self.db = db
         self.window_minutes = window_minutes
         self.check_interval_seconds = check_interval_seconds
+        corr = getattr(config, "correlation", None)
+        self.exclude_sources: list[str] = list(getattr(corr, "exclude_sources", None) or [])
         # Track which anchor signal IDs we've already correlated on
         self._fired_on_anchors: set = set()
         # Time of the most recently fired correlation. A single real-world
@@ -85,7 +87,9 @@ class CorrelationDetector:
         Returns True if at least one fireable multi-source window was found —
         applying the same dedup/cooldown rules as check_and_signal().
         """
-        windows = self.db.get_correlated_signals_in_window(minutes=self.window_minutes)
+        windows = self.db.get_correlated_signals_in_window(
+            minutes=self.window_minutes, exclude_sources=self.exclude_sources
+        )
         return any(self._is_fireable(w) for w in windows)
 
     def check_and_signal(self) -> None:
@@ -93,7 +97,9 @@ class CorrelationDetector:
         Check for correlation and write a CRITICAL signal to the DB if found.
         Deduplicates: only fires once per anchor signal.
         """
-        windows = self.db.get_correlated_signals_in_window(minutes=self.window_minutes)
+        windows = self.db.get_correlated_signals_in_window(
+            minutes=self.window_minutes, exclude_sources=self.exclude_sources
+        )
         if not windows:
             return
 

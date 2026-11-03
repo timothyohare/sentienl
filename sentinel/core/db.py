@@ -522,7 +522,9 @@ class Database:
                     cursor.rowcount, days)
         return cursor.rowcount
 
-    def get_correlated_signals_in_window(self, minutes: int = 10) -> list[dict[str, Any]]:
+    def get_correlated_signals_in_window(
+        self, minutes: int = 10, exclude_sources: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """
         Find HIGH/CRITICAL signals from 2+ distinct sources correlated with a
         recent anchor event.
@@ -533,6 +535,9 @@ class Database:
         ±`minutes` of that anchor's timestamp. So `minutes` is the maximum gap
         between any correlated event and its anchor (a cluster can therefore
         span up to 2*`minutes` end-to-end).
+
+        `exclude_sources` are left out of both anchor and join, the same way
+        correlation_detector's own outputs are.
         """
         conn = self._get_conn()
         # NOTE: created_at is stored as ISO-8601 with a 'T' separator and a
@@ -542,7 +547,9 @@ class Database:
         # so BOTH sides must be normalised through datetime() before comparison.
         # The correlation_detector's own CRITICAL outputs are excluded from both
         # anchor and join to avoid a self-reinforcing feedback loop.
-        sql = """
+        excluded = ["correlation_detector", *(exclude_sources or [])]
+        marks = ",".join("?" * len(excluded))
+        sql = f"""
             SELECT
                 s1.id        AS anchor_id,
                 s1.created_at AS anchor_time,
@@ -553,15 +560,17 @@ class Database:
               ON datetime(s2.created_at) >= datetime(s1.created_at, '-' || ? || ' minutes')
              AND datetime(s2.created_at) <= datetime(s1.created_at, '+' || ? || ' minutes')
              AND s2.priority IN ('HIGH', 'CRITICAL')
-             AND s2.source != 'correlation_detector'
+             AND s2.source NOT IN ({marks})
             WHERE s1.priority IN ('HIGH', 'CRITICAL')
-              AND s1.source != 'correlation_detector'
+              AND s1.source NOT IN ({marks})
               AND datetime(s1.created_at) >= datetime('now', '-' || ? || ' minutes')
             GROUP BY s1.id
             HAVING COUNT(DISTINCT s2.source) >= 2
             ORDER BY s1.created_at DESC
         """
-        rows = conn.execute(sql, (minutes, minutes, minutes * 2)).fetchall()
+        rows = conn.execute(
+            sql, (minutes, minutes, *excluded, *excluded, minutes * 2)
+        ).fetchall()
         return [dict(r) for r in rows]
 
     def count_signals_since(

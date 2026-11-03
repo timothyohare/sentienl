@@ -222,6 +222,13 @@ class PaperConfig:
 
 
 @dataclass
+class CorrelationConfig:
+    # Sources that never take part in a correlation, as anchor or as joined
+    # signal (plan 06: betfair_racing moves are unrelated to geopolitics).
+    exclude_sources: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     truth_social: TruthSocialConfig
     polymarket: PolymarketConfig
@@ -232,6 +239,7 @@ class Config:
     database: DatabaseConfig
     dashboard: DashboardConfig
     paper: PaperConfig = field(default_factory=PaperConfig)
+    correlation: CorrelationConfig = field(default_factory=CorrelationConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +307,12 @@ def _parse_truth_social(data: dict) -> TruthSocialConfig:
         critical_keywords=list(data.get("critical_keywords", [])),
         endorsement_markers=list(data.get("endorsement_markers", ["endorse", "endorsement"])),
         default_priority=default_priority,
+    )
+
+
+def _parse_correlation(data: dict) -> CorrelationConfig:
+    return CorrelationConfig(
+        exclude_sources=[str(s) for s in data.get("exclude_sources") or []],
     )
 
 
@@ -549,6 +563,7 @@ def load_config(path: str) -> Config:
         database=_parse_database(raw.get("database", {})),
         dashboard=_parse_dashboard(raw.get("dashboard", {})),
         paper=_parse_paper(raw.get("paper") or {}),
+        correlation=_parse_correlation(raw.get("correlation") or {}),
     )
     logger.info("Config loaded from %s", path)
     return cfg

@@ -504,3 +504,44 @@ class TestCheckAndSignalMocked:
             f"CORRELATED SIGNAL: 2 sources (truth_social,kalshi) "
             f"within 10-minute window at {anchor_time}"
         )
+
+
+# ---------------------------------------------------------------------------
+# exclude_sources (plan 06, Task 6): sources such as betfair_racing must never
+# take part in a correlation, as anchor or as joined signal. Otherwise an
+# unrelated race-day price move plus a futures spike makes a false CRITICAL.
+# ---------------------------------------------------------------------------
+
+class TestExcludeSources:
+    def _detector(self, db, exclude):
+        cfg = MagicMock()
+        cfg.correlation.exclude_sources = exclude
+        return CorrelationDetector(config=cfg, db=db, window_minutes=10)
+
+    def test_excluded_source_does_not_correlate(self, mock_db):
+        insert_signal_now(mock_db, "betfair_racing")
+        insert_signal_now(mock_db, "futures_oil")
+        assert self._detector(mock_db, ["betfair_racing"]).check_correlation() is False
+
+    def test_non_excluded_sources_still_correlate(self, mock_db):
+        insert_signal_now(mock_db, "betfair_racing")
+        insert_signal_now(mock_db, "betfair_politics")
+        insert_signal_now(mock_db, "kalshi")
+        det = self._detector(mock_db, ["betfair_racing"])
+        det.check_and_signal()
+        rows = mock_db.execute(
+            "SELECT payload FROM signals WHERE source='correlation_detector'"
+        ).fetchall()
+        assert len(rows) == 1
+        assert "betfair_racing" not in rows[0][0]
+
+    def test_no_exclusions_keeps_old_behaviour(self, mock_db):
+        insert_signal_now(mock_db, "betfair_racing")
+        insert_signal_now(mock_db, "futures_oil")
+        assert self._detector(mock_db, []).check_correlation() is True
+
+    def test_db_query_excludes_sources(self, mock_db):
+        insert_signal_now(mock_db, "a")
+        insert_signal_now(mock_db, "b")
+        assert mock_db.get_correlated_signals_in_window(minutes=10)
+        assert mock_db.get_correlated_signals_in_window(minutes=10, exclude_sources=["b"]) == []

@@ -1052,3 +1052,15 @@ class TestPaperConfig:
         path.write_text(MINIMAL_CONFIG_YAML + "\npaper:\n  costs:\n    X: {multiplier: 0}\n")
         with pytest.raises(ConfigValidationError, match="multiplier"):
             load_config(str(path))
+
+
+class TestCorrelationConfig:
+    def test_defaults_to_no_exclusions(self, tmp_path):
+        p = tmp_path / "c.yaml"
+        p.write_text(VALID_CONFIG_YAML)
+        assert load_config(str(p)).correlation.exclude_sources == []
+
+    def test_parses_exclude_sources(self, tmp_path):
+        p = tmp_path / "c.yaml"
+        p.write_text(VALID_CONFIG_YAML + "\ncorrelation:\n  exclude_sources: [betfair_racing]\n")
+        assert load_config(str(p)).correlation.exclude_sources == ["betfair_racing"]
