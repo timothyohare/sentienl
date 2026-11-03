@@ -137,7 +137,7 @@ S4 library ───────┘                              │
 | D7 | Liquidity guard: no signal unless the back-lay spread is ≤ `max_spread_ticks` and market `totalMatched` ≥ `min_market_matched` | Thin exchange books jump on tiny stakes. This is the same lesson as the futures `min_absolute_volume` incident (2026-08-12) | — |
 | D8 | Client behind `BetfairClientProtocol`. Tests mock at the protocol boundary | Same pattern as `TruthSocialClientProtocol`. Keeps the suite hermetic | — |
 | D9 | Credentials go in `.env` with a **`betfair_` prefix** (`betfair_username`, `betfair_password`, `betfair_app_key`, `betfair_cert_path`) | The 2026-08-11 outage: unprefixed `username=` collided and killed Truth Social for 3 days | — |
-| D10 | Library chosen by spike S4. Default lean: `betfairlightweight` (2.24.0 on PyPI, MIT, handles login/keepAlive/cert login, streaming available later) | Login, keepAlive and request weighting are easy to get subtly wrong | Raw httpx: matches Kalshi, but means re-implementing session handling |
+| D10 | **Decided (S4, 2026-11-03): `betfairlightweight==2.24.0`** in `lightweight=True` mode (returns plain dicts), behind `BetfairClientProtocol`. Set `identity_uri`/`api_uri` explicitly from config instead of relying on its `locale` names. See §4.1 | It handles login, keepAlive, session expiry, cert login, the historic-data API (S3) and streaming (Phase 4). Plain dicts keep fixture tests simple | Raw httpx: matches Kalshi and is typed, but means re-implementing session handling, and S3/Phase 4 would still need a library. `flumine`: a betting framework, which conflicts with the read-only non-goal |
 | D11 | Login failures back off exponentially and **stop after N** (no tight loop). The session token is cached in `db.state` | Repeated failed logins can lock the account (verify: S1). A locked account is a human-only fix | — |
 
 ### 2.4 Config sketch (`betfair:`)
@@ -237,6 +237,44 @@ collectors.
 | **S4** | Library: `betfairlightweight` vs raw httpx. Check typing (mypy strictness), dependency weight, cert login support, maintenance | Decision recorded in D10 | 1h | none (can start now) |
 | **S5** (optional) | Value check: does Betfair politics lead or lag Kalshi on the same event (US midterms, tonight)? | Cross-venue lag on one event from S3 data and Kalshi's DB rows | 2h | S3 |
 | S6 (deferred) | Streaming vs polling latency | Only if Phase 3 shows polling misses moves before the jump | — | Phase 3 |
+
+### 4.1 S4 findings (done 2026-11-03, no credentials needed)
+
+Installed in a scratch venv and exercised offline against mocked HTTP:
+login → `listMarketBook` returned plain dicts. The request carried
+`X-Application`/`X-Authentication` and the RPC method was
+`SportsAPING/v1.0/listMarketBook`.
+
+- **Maintenance and licence:** MIT, from the betcode-org GitHub org. Latest
+  release 2.24.0 on 2026-09-04, with regular releases before that.
+- **Dependencies:** only `requests<2.35.0`. The project venv already has
+  requests 2.31.0 (through yfinance, alpaca-py and responses), so nothing new
+  gets pulled in. Pin `betfairlightweight==2.24.0` in `requirements.txt`.
+- **Typing:** no `py.typed`. `pyproject.toml` already sets
+  `ignore_missing_imports = true`, so mypy stays green, but calls into the
+  library are untyped. The protocol wrapper (D8) gives the typed boundary.
+- **AU endpoint gotcha:** `locale="australia"` silently falls back to the
+  **.com** endpoints. Only `locale="new_zealand"` maps to `.com.au`
+  (identity `identitysso.betfair.com.au`, API `api.betfair.com.au`). Cert
+  login has no `.com.au` mapping in any locale. That's why D10 sets the URIs
+  explicitly. Which host an AU account actually needs is still S1's question;
+  `api.betfair.com`, `api-au.betfair.com` and `api.betfair.com.au` all answer
+  from this server.
+- **Session:** the library tracks a 12h session timeout (`session_expired`),
+  with `keep_alive()` available. S1 checks whether AU uses the same TTL.
+- **Timeouts:** connect 3.05s, read 16s per request. That's fine.
+- **Request weight:** the library documents the limits (`metadata.py`, a cap
+  of 200 per request) but does **not** batch for you, so Task 2 still owns
+  batching. `EX_BEST_OFFERS` alone weighs 5 (→ 40 markets per call), while
+  `EX_BEST_OFFERS + EX_TRADED` weighs 20 (→ 10 per call). Runner-level
+  `totalMatched` should be enough for `matched_surge` without `EX_TRADED`
+  (S2 confirms), which gives 4× the markets per call.
+- **Quirk:** when the password or app key is `None`, it quietly reads env
+  vars named `<username>password` / `<username>`. Always pass both explicitly,
+  in keeping with D9.
+- **Read-only:** the library exposes `place_orders` and friends. The Task 2
+  guard test greps `sentinel/` for those names, so the wrapper can never
+  call them.
 
 **Go/no-go after Phase 0:** stop if S1 finds automated access needs a paid
 live key Tim won't buy *and* the delayed key is unusable. Also stop if S2/S3

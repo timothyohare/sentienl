@@ -8,7 +8,7 @@ Every task is done only when `gate-ci --force` exits 0, tests were written
 first, and the change is committed and pushed.
 
 ## Phase 0: Spikes
-- [ ] S4: Library choice, `betfairlightweight` vs httpx (1h). **Can start now**
+- [x] S4: Library choice → `betfairlightweight==2.24.0`, lightweight mode, explicit URIs (done 2026-11-03; plan §4.1)
 - [ ] S1: Auth, endpoint, session TTL, delayed-key delay (2h). Blocked on H1, H2, (H4)
 - [ ] S2: Capture fixtures, confirm event type IDs, weight limit, markets per racing day (2h). Blocked on S1
 - [ ] S3: Historical data check: Melbourne Cup 2026 + one politics market (2h). Blocked on H1
