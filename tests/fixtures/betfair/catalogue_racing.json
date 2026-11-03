@@ -1,0 +1,161 @@
+[
+ {
+  "marketId": "1.264888469",
+  "marketName": "R8 1740m Pace M",
+  "marketStartTime": "2026-11-03T10:31:00.000Z",
+  "description": {
+   "persistenceEnabled": true,
+   "bspMarket": true,
+   "marketTime": "2026-11-03T10:31:00.000Z",
+   "suspendTime": "2026-11-03T10:31:00.000Z",
+   "bettingType": "ODDS",
+   "turnInPlayEnabled": true,
+   "marketType": "WIN",
+   "regulator": "MALTA LOTTERIES AND GAMBLING AUTHORITY",
+   "marketBaseRate": 8.0,
+   "discountAllowed": true,
+   "wallet": "UK wallet",
+   "rules": "<br><a href=\"https://www.betfair.com.au/hub/tools/betting-tools/betfair-starting-price-bsp/\" target=\"_blank\"><img src=\"https://www.betfair.com.au/images/starting-price.png\" alt=\"Betfair SP\" border=\"0\"></a> <a href=\"https://www.betfair.com.au/hub/help/account-help/commissions-and-charges/\" target=\"_blank\"><img src=\"https://www.betfair.com.au/images/MBR-8percentage.png\" alt=\"8% Market Base Rate\" border=\"0\"></a><br><br><b>MARKET INFORMATION</b><br><br>For further information please see <a href=https://www.betfair.com.au/AUS_NZL/aboutUs/Rules.and.Regulations/ style=color:0163ad; text-decoration: underline; target=_blank>Rules & Regs</a>.<br><br>Who will win this race? Betfair Non-Runner Rule applies. Reduction factors may be updated periodically at the discretion of Betfair based on trading in the market, but after approximately 5 minutes from scheduled \u2018off\u2019 time of a given race, they will be updated only in exceptional circumstances. Odds of matched bets will only be adjusted if there are ADDITIONAL non-runners after your bet is matched. This market will turn <b>IN PLAY</b> at the off with all unmatched bets cancelled once the Betfair SP reconciliation process has been completed. Betting will be suspended at the end of the race. This market will initially be settled on a First Past the Post basis. However we will re-settle all bets should the official result at the time of the \"All Clear\" announcement differ from any initial settlement. Dead heat rules apply.<br><br><b>BSP (Betfair Starting Price) operates on this market</b>. For more information about setting a Starting Price odds limit  <a target=\"_blank\"  href=\"https://www.betfair.com.au/hub/betfair-starting-price-faqs/\">click here</a><br><br>This is a <a href=\"https://www.betfair.com.au/hub/cross-matching-on-exchange-markets/\" target=\"_blank\">cross-matching</a> market. <br><br><b>Customers should be aware that:</b><ol><li>Transmissions described as \"live\" by some broadcasters may actually be delayed and that all in-play races are not necessarily televised;</li><li>The extent of any such delay may vary between customers, depending on the set-up through which they are receiving pictures or data. </li><li>Information (such as jockey silks, saddlecloth numbers etc) is provided \"as is\" and is for guidance only. Betfair does not guarantee the accuracy of this information and use of it to place bets is entirely at your own risk.</li></ol><br>",
+   "rulesHasDate": true,
+   "raceType": "Harness",
+   "priceLadderDescription": {
+    "type": "CLASSIC"
+   }
+  },
+  "totalMatched": 2628.152994,
+  "runners": [
+   {
+    "selectionId": 104437449,
+    "runnerName": "1. Machete Ranger",
+    "handicap": 0.0,
+    "sortPriority": 1
+   },
+   {
+    "selectionId": 104437450,
+    "runnerName": "2. Del Licious",
+    "handicap": 0.0,
+    "sortPriority": 2
+   },
+   {
+    "selectionId": 104437451,
+    "runnerName": "3. On Side",
+    "handicap": 0.0,
+    "sortPriority": 3
+   }
+  ],
+  "event": {
+   "id": "36267621",
+   "name": "Wagga (AUS) 3rd Nov",
+   "countryCode": "AU",
+   "timezone": "Australia/Sydney",
+   "venue": "Wagga",
+   "openDate": "2026-11-03T06:58:00.000Z"
+  }
+ },
+ {
+  "marketId": "1.264888472",
+  "marketName": "R9 1740m Pace M",
+  "marketStartTime": "2026-11-03T11:05:00.000Z",
+  "description": {
+   "persistenceEnabled": true,
+   "bspMarket": true,
+   "marketTime": "2026-11-03T11:05:00.000Z",
+   "suspendTime": "2026-11-03T11:05:00.000Z",
+   "bettingType": "ODDS",
+   "turnInPlayEnabled": true,
+   "marketType": "WIN",
+   "regulator": "MALTA LOTTERIES AND GAMBLING AUTHORITY",
+   "marketBaseRate": 8.0,
+   "discountAllowed": true,
+   "wallet": "UK wallet",
+   "rules": "<br><a href=\"https://www.betfair.com.au/hub/tools/betting-tools/betfair-starting-price-bsp/\" target=\"_blank\"><img src=\"https://www.betfair.com.au/images/starting-price.png\" alt=\"Betfair SP\" border=\"0\"></a> <a href=\"https://www.betfair.com.au/hub/help/account-help/commissions-and-charges/\" target=\"_blank\"><img src=\"https://www.betfair.com.au/images/MBR-8percentage.png\" alt=\"8% Market Base Rate\" border=\"0\"></a><br><br><b>MARKET INFORMATION</b><br><br>For further information please see <a href=https://www.betfair.com.au/AUS_NZL/aboutUs/Rules.and.Regulations/ style=color:0163ad; text-decoration: underline; target=_blank>Rules & Regs</a>.<br><br>Who will win this race? Betfair Non-Runner Rule applies. Reduction factors may be updated periodically at the discretion of Betfair based on trading in the market, but after approximately 5 minutes from scheduled \u2018off\u2019 time of a given race, they will be updated only in exceptional circumstances. Odds of matched bets will only be adjusted if there are ADDITIONAL non-runners after your bet is matched. This market will turn <b>IN PLAY</b> at the off with all unmatched bets cancelled once the Betfair SP reconciliation process has been completed. Betting will be suspended at the end of the race. This market will initially be settled on a First Past the Post basis. However we will re-settle all bets should the official result at the time of the \"All Clear\" announcement differ from any initial settlement. Dead heat rules apply.<br><br><b>BSP (Betfair Starting Price) operates on this market</b>. For more information about setting a Starting Price odds limit  <a target=\"_blank\"  href=\"https://www.betfair.com.au/hub/betfair-starting-price-faqs/\">click here</a><br><br>This is a <a href=\"https://www.betfair.com.au/hub/cross-matching-on-exchange-markets/\" target=\"_blank\">cross-matching</a> market. <br><br><b>Customers should be aware that:</b><ol><li>Transmissions described as \"live\" by some broadcasters may actually be delayed and that all in-play races are not necessarily televised;</li><li>The extent of any such delay may vary between customers, depending on the set-up through which they are receiving pictures or data. </li><li>Information (such as jockey silks, saddlecloth numbers etc) is provided \"as is\" and is for guidance only. Betfair does not guarantee the accuracy of this information and use of it to place bets is entirely at your own risk.</li></ol><br>",
+   "rulesHasDate": true,
+   "raceType": "Harness",
+   "priceLadderDescription": {
+    "type": "CLASSIC"
+   }
+  },
+  "totalMatched": 45.584579999999995,
+  "runners": [
+   {
+    "selectionId": 104437458,
+    "runnerName": "1. Miss Lily Billie",
+    "handicap": 0.0,
+    "sortPriority": 1
+   },
+   {
+    "selectionId": 104437459,
+    "runnerName": "2. Isosceles Kramer",
+    "handicap": 0.0,
+    "sortPriority": 2
+   },
+   {
+    "selectionId": 104437460,
+    "runnerName": "3. Our Ultimate Elsie",
+    "handicap": 0.0,
+    "sortPriority": 3
+   }
+  ],
+  "event": {
+   "id": "36267621",
+   "name": "Wagga (AUS) 3rd Nov",
+   "countryCode": "AU",
+   "timezone": "Australia/Sydney",
+   "venue": "Wagga",
+   "openDate": "2026-11-03T06:58:00.000Z"
+  }
+ },
+ {
+  "marketId": "1.264930425",
+  "marketName": "R1 1103m Mdn",
+  "marketStartTime": "2026-11-04T01:55:00.000Z",
+  "description": {
+   "persistenceEnabled": true,
+   "bspMarket": true,
+   "marketTime": "2026-11-04T01:55:00.000Z",
+   "suspendTime": "2026-11-04T01:55:00.000Z",
+   "bettingType": "ODDS",
+   "turnInPlayEnabled": true,
+   "marketType": "WIN",
+   "regulator": "MALTA LOTTERIES AND GAMBLING AUTHORITY",
+   "marketBaseRate": 8.0,
+   "discountAllowed": true,
+   "wallet": "UK wallet",
+   "rules": "<br><a href=\"https://www.betfair.com.au/hub/getting-started/the-basics/commissions-charges/\" target=\"_blank\"><img src=\"https://www.betfair.com.au/images/MBR-8percentage.png\" alt=\"8% Market Base Rate\" border=\"0\"></a><a href=\"https://www.betfair.com.au/hub/tools/betting-tools/betfair-starting-price-bsp/\" target=\"_blank\"><img src=\"https://www.betfair.com.au/images/starting-price.png\" alt=\"Betfair SP\" border=\"0\"></a><br><br><b>MARKET INFORMATION</b><br><br>For further information please see <a href=https://www.betfair.com.au/AUS_NZL/aboutUs/Rules.and.Regulations/ style=color:0163ad; text-decoration: underline; target=_blank>Rules & Regs</a>.<br><br>Who will win this race? Betfair Non-Runner Rule applies. Reduction factors may be updated periodically at the discretion of Betfair based on trading in the market, but after approximately 5 minutes from scheduled \u2018off\u2019 time of a given race, they will be updated only in exceptional circumstances. Odds of matched bets will only be adjusted if there are ADDITIONAL non-runners after your bet is matched. This market will turn <b>IN PLAY</b> at the off with all unmatched bets cancelled once the Betfair SP reconciliation process has been completed. Betting will be suspended at the end of the race. This market will initially be settled on a First Past the Post basis. However we will re-settle all bets should the official result at the time of the \"weigh-in\" announcement differ from any initial settlement. Dead Heat rules apply.<br><br><b>BSP (Betfair Starting Price) operates on this market</b>. For more information about setting a Starting Price odds limit  <a target=\"_blank\"  href=\"https://www.betfair.com.au/hub/betfair-starting-price-faqs/\">click here</a><br><br>This is a <a href=\"https://www.betfair.com.au/hub/cross-matching-on-exchange-markets/\" target=\"_blank\">cross-matching</a> market.<b><br><br>Customers should be aware that:</b><ol><li>Transmissions described as \"live\" by some broadcasters may actually be delayed and that all in-play races are not necessarily televised;</li><li>The extent of any such delay may vary between customers, depending on the set-up through which they are receiving pictures or data. </li><li>Information (such as jockey silks, saddlecloth numbers etc) is provided \"as is\" and is for guidance only. Betfair does not guarantee the accuracy of this information and use of it to place bets is entirely at your own risk.</li></ol><br>",
+   "rulesHasDate": true,
+   "raceType": "Flat",
+   "priceLadderDescription": {
+    "type": "CLASSIC"
+   }
+  },
+  "totalMatched": 14.502436,
+  "runners": [
+   {
+    "selectionId": 104572521,
+    "runnerName": "1. Jackpot Park",
+    "handicap": 0.0,
+    "sortPriority": 1
+   },
+   {
+    "selectionId": 98451873,
+    "runnerName": "2. Johnny Tightlips",
+    "handicap": 0.0,
+    "sortPriority": 2
+   },
+   {
+    "selectionId": 102135077,
+    "runnerName": "3. Western Edge",
+    "handicap": 0.0,
+    "sortPriority": 3
+   }
+  ],
+  "event": {
+   "id": "36270576",
+   "name": "Kyneton (AUS) 4th Nov",
+   "countryCode": "AU",
+   "timezone": "Australia/Sydney",
+   "venue": "Kyneton",
+   "openDate": "2026-11-04T01:55:00.000Z"
+  }
+ }
+]

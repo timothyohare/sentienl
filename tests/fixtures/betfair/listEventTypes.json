@@ -1,0 +1,23 @@
+[
+ {
+  "eventType": {
+   "id": "7",
+   "name": "Horse Racing"
+  },
+  "marketCount": 439
+ },
+ {
+  "eventType": {
+   "id": "4339",
+   "name": "Greyhound Racing"
+  },
+  "marketCount": 643
+ },
+ {
+  "eventType": {
+   "id": "2378961",
+   "name": "Politics"
+  },
+  "marketCount": 127
+ }
+]

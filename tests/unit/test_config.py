@@ -1064,3 +1064,83 @@ class TestCorrelationConfig:
         p = tmp_path / "c.yaml"
         p.write_text(VALID_CONFIG_YAML + "\ncorrelation:\n  exclude_sources: [betfair_racing]\n")
         assert load_config(str(p)).correlation.exclude_sources == ["betfair_racing"]
+
+
+BETFAIR_YAML = """
+betfair:
+  enabled: true
+  poll_interval_seconds: 20
+  discovery_interval_seconds: 300
+  poll_in_play: true
+  login: cert
+  filters:
+    - domain: politics
+      event_type_ids: ["2378961"]
+      text_query: midterm
+      max_markets: 10
+    - domain: racing
+      event_type_ids: ["7"]
+      market_countries: ["AU"]
+      market_type_codes: ["WIN"]
+      lookahead_hours: 6
+  pinned_markets:
+    "1.250758109": politics
+  thresholds:
+    odds_move_pp: 4.0
+    odds_move_pp_high: 12.0
+    matched_surge: 1000
+    matched_surge_high: 9000
+    max_spread_pp: 3.0
+    min_market_matched: 500
+"""
+
+
+class TestBetfairConfig:
+    def _load(self, tmp_path, extra=""):
+        p = tmp_path / "c.yaml"
+        p.write_text(VALID_CONFIG_YAML + extra)
+        return load_config(str(p)).betfair
+
+    def test_missing_section_is_disabled_with_defaults(self, tmp_path):
+        bf = self._load(tmp_path)
+        assert bf.enabled is False
+        assert bf.filters == [] and bf.pinned_markets == {}
+        assert bf.identity_url == "https://identitysso.betfair.com.au/api/"
+        assert bf.api_url == "https://api.betfair.com/exchange/"
+        assert bf.login == "interactive"
+        assert bf.poll_interval_seconds == 30
+        assert bf.discovery_interval_seconds == 600
+        assert bf.poll_in_play is False
+
+    def test_parses_full_section(self, tmp_path):
+        bf = self._load(tmp_path, BETFAIR_YAML)
+        assert bf.enabled is True
+        assert bf.poll_interval_seconds == 20
+        assert bf.discovery_interval_seconds == 300
+        assert bf.poll_in_play is True
+        assert bf.login == "cert"
+        pol, race = bf.filters
+        assert pol.domain == "politics" and pol.text_query == "midterm"
+        assert pol.event_type_ids == ["2378961"] and pol.max_markets == 10
+        assert pol.lookahead_hours is None
+        assert race.market_countries == ["AU"] and race.market_type_codes == ["WIN"]
+        assert race.lookahead_hours == 6.0 and race.max_markets == 40
+        assert bf.pinned_markets == {"1.250758109": "politics"}
+        t = bf.thresholds
+        assert (t.odds_move_pp, t.odds_move_pp_high) == (4.0, 12.0)
+        assert (t.matched_surge, t.matched_surge_high) == (1000.0, 9000.0)
+        assert (t.max_spread_pp, t.min_market_matched) == (3.0, 500.0)
+
+    def test_default_thresholds(self, tmp_path):
+        t = self._load(tmp_path, "\nbetfair:\n  enabled: true\n").thresholds
+        assert (t.odds_move_pp, t.odds_move_pp_high) == (5.0, 15.0)
+        assert (t.matched_surge, t.matched_surge_high) == (5000.0, 50000.0)
+        assert (t.max_spread_pp, t.min_market_matched) == (5.0, 10000.0)
+
+    def test_filter_without_domain_rejected(self, tmp_path):
+        with pytest.raises(ConfigValidationError):
+            self._load(tmp_path, "\nbetfair:\n  filters:\n    - event_type_ids: ['7']\n")
+
+    def test_bad_login_mode_rejected(self, tmp_path):
+        with pytest.raises(ConfigValidationError):
+            self._load(tmp_path, "\nbetfair:\n  login: magic\n")

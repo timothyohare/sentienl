@@ -49,3 +49,17 @@ are in `plans/06-betfair-exchange.md`.
       they sensible?
 - [ ] **H9: Checkpoint 3.** Sign off on the success criteria evidence and
       calibrated thresholds
+
+## Links to look at (saved 2026-11-03)
+- [ ] https://www.gruss-software.co.uk/forum/viewtopic.php?t=9335. A 2015
+      forum thread confirming AU racing markets offer Betfair SP. The agent
+      couldn't see any attachment without a forum login.
+- [ ] https://gofile.io/d/8Au45z6C. Contents unknown: the page needs
+      JavaScript, and listing it needs a gofile guest account, which the agent
+      was blocked from creating. Check what's in it before handing it over.
+- [ ] https://promo.betfair.com/betfairsp/prices. **Free, from Betfair**:
+      daily CSVs back to ~2018 for AU/UK/IRE/USA/FR/RSA/UAE racing (win and
+      place). Per runner: BSP, pre-race/morning weighted average price,
+      pre-race/in-play min/max, and traded volume. The agent checked today's
+      AU file (551 rows, includes the Melbourne Cup card). Likely good enough
+      for S3 threshold calibration on racing.

@@ -9,3 +9,4 @@ alpaca-py==0.29.0
 # IB Gateway connectivity (futures data source) — repackaged ibapi, matches
 # the sibling rotrade project's dependency (see requirements-backtest.txt there)
 nautilus-ibapi==10.46.1
+betfairlightweight==2.24.0

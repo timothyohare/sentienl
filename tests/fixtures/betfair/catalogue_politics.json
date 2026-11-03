@@ -1,0 +1,155 @@
+[
+ {
+  "marketId": "1.230583324",
+  "marketName": "Most Seats",
+  "marketStartTime": "2029-08-15T07:00:00.000Z",
+  "description": {
+   "persistenceEnabled": true,
+   "bspMarket": false,
+   "marketTime": "2029-08-15T07:00:00.000Z",
+   "suspendTime": "2029-08-15T07:00:00.000Z",
+   "bettingType": "ODDS",
+   "turnInPlayEnabled": true,
+   "marketType": "NONSPORT",
+   "regulator": "MALTA LOTTERIES AND GAMBLING AUTHORITY",
+   "marketBaseRate": 6.0,
+   "discountAllowed": true,
+   "wallet": "UK wallet",
+   "rules": "<br><br><b>MARKET INFORMATION</b><br><br>For further information please see <a href=http://content.betfair.com/aboutus/content.asp?sWhichKey=Rules%20and%20Regulations#undefined.do style=color:0163ad; text-decoration: underline; target=_blank>Rules & Regs</a>.<br><br>Which party will win the most parliamentary seats at the next UK general election?<br><br>This market will be <b>turned in-play</b> at the start of voting on the day of the next general election. Customers are entirely responsible for their positions at all times.<br><br>The Speaker will not be classified as belonging to any particular party, and will therefore not be counted in any individual party's seat totals.New runners may be added upon request.<br><br>Customers should be aware that:<b><br><br><li>Transmissions described as \u201clive\u201d by some broadcasters may actually be delayed.</li><br><li>The extent of any such delay may vary, depending on the set-up through which they are receiving pictures or data.</li><br></b><br>",
+   "rulesHasDate": false,
+   "priceLadderDescription": {
+    "type": "CLASSIC"
+   }
+  },
+  "totalMatched": 7274730.103216001,
+  "runners": [
+   {
+    "selectionId": 1111884,
+    "runnerName": "Labour",
+    "handicap": 0.0,
+    "sortPriority": 1
+   },
+   {
+    "selectionId": 1111889,
+    "runnerName": "Conservatives",
+    "handicap": 0.0,
+    "sortPriority": 2
+   },
+   {
+    "selectionId": 38700528,
+    "runnerName": "Reform UK",
+    "handicap": 0.0,
+    "sortPriority": 3
+   }
+  ],
+  "event": {
+   "id": "2725551",
+   "name": "Next General Election",
+   "countryCode": "GB",
+   "timezone": "Europe/London",
+   "openDate": "2026-10-02T15:12:34.000Z"
+  }
+ },
+ {
+  "marketId": "1.250758109",
+  "marketName": "Which party will control the House in 2026?",
+  "marketStartTime": "2026-11-03T10:00:01.000Z",
+  "description": {
+   "persistenceEnabled": true,
+   "bspMarket": false,
+   "marketTime": "2026-11-03T10:00:01.000Z",
+   "suspendTime": "2026-11-03T10:00:01.000Z",
+   "bettingType": "ODDS",
+   "turnInPlayEnabled": true,
+   "marketType": "NONSPORT",
+   "regulator": "MALTA LOTTERIES AND GAMBLING AUTHORITY",
+   "marketBaseRate": 6.0,
+   "discountAllowed": true,
+   "wallet": "UK wallet",
+   "rules": "<br><b>MARKET INFORMATION</b><br><br>For further information please see <a href=http://content.betfair.com/aboutus/content.asp?sWhichKey=Rules%20and%20Regulations#undefined.do style=color:0163ad; text-decoration: underline; target=_blank>Rules & Regs</a>.<br><br>Which party will control a majority of House of Representatives seats as a result of the 2026 US House of Representatives elections?<br><br>This market will be <b>turned in-play</b>, with unmatched bets cancelled, at the stated time on the day of election. Thereafter, the market will not be actively managed and customers are entirely responsible for their bets at all times.<br><br> The party deemed to control the United States House of Representatives will be the party that reaches 218 of the total 435 US House of Representatives seats, as a result of the 2026 US House of Representatives elections, including any run-off elections that take place. For the purposes of this market the Associated Press will be used for the projected House of Representatives makeup in terms of party seat numbers.<br><br>Any independent senator will be added to totals of the party if they caucus/align with that Party.<br><br>This market will be settled once the party projected to have Control of the House of Representatives is announced by the Associated Press.<br><br>In the absence of the Associated Press calling which party will Control the Senate, or where Betfair solely adjudicates there is uncertainty around the result, this market will be settled on which party House leader occupies the role of House Majority Leader after the President takes office on Inauguration Day. https://www.house.gov/  will be used for settlement purposes in that instance.<br><br>Any changes in independent representatives\u2019 intentions or defections from the major parties after this market is settled will be entirely disregarded.<br><br>Betfair expressly reserves the right to suspend and/or void any and all bets on this market at any time if Betfair is not satisfied (in its absolute discretion) with the certainty of the outcome.<br><br>Betfair may suspend betting on the market at any time in the interests of maintaining integrity and fairness in the markets.<br><br>",
+   "rulesHasDate": true,
+   "priceLadderDescription": {
+    "type": "CLASSIC"
+   }
+  },
+  "totalMatched": 6644503.281355999,
+  "runners": [
+   {
+    "selectionId": 38261569,
+    "runnerName": "Republican Party",
+    "handicap": 0.0,
+    "sortPriority": 1
+   },
+   {
+    "selectionId": 12987900,
+    "runnerName": "Democratic Party",
+    "handicap": 0.0,
+    "sortPriority": 2
+   },
+   {
+    "selectionId": 91444312,
+    "runnerName": "Deomcratic Party",
+    "handicap": 0.0,
+    "sortPriority": 3
+   }
+  ],
+  "event": {
+   "id": "34942577",
+   "name": "USA 2026 Midterm Elections",
+   "countryCode": "US",
+   "timezone": "Europe/London",
+   "openDate": "2026-11-03T10:00:01.000Z"
+  }
+ },
+ {
+  "marketId": "1.235690682",
+  "marketName": "Election Winner",
+  "marketStartTime": "2028-11-07T11:00:00.000Z",
+  "description": {
+   "persistenceEnabled": true,
+   "bspMarket": false,
+   "marketTime": "2028-11-07T11:00:00.000Z",
+   "suspendTime": "2028-11-07T11:00:00.000Z",
+   "bettingType": "ODDS",
+   "turnInPlayEnabled": true,
+   "marketType": "NONSPORT",
+   "regulator": "MALTA LOTTERIES AND GAMBLING AUTHORITY",
+   "marketBaseRate": 6.0,
+   "discountAllowed": true,
+   "wallet": "UK wallet",
+   "rules": "<br><br><b>MARKET INFORMATION</b><br><br>For further information please see <a href=http://content.betfair.com/aboutus/content.asp?sWhichKey=Rules%20and%20Regulations#undefined.do style=color:0163ad; text-decoration: underline; target=_blank>Rules & Regs</a>.<br><br>Which candidate will win the 2028 US Presidential Election?<br><br> This market will be <b>turned in-play<b> at the stated time on the day of the election. Thereafter the market will not be actively managed. Customers are entirely responsible for their bets at all times.<br><br>This market will be settled according to the candidate that has the most projected Electoral College votes won at the 2028 presidential election. In the event that no Presidential candidate receives a majority of the projected Electoral College votes, this market will be settled on the person chosen as President in accordance with the procedures set out by the Twelfth Amendment to the United States Constitution.<br><br>This market will be settled once both the projected winner is announced by the Associated Press and the losing candidate concedes.  If the losing candidate does not concede, or if there is any uncertainty around the result (for instance, caused by recounts and/or potential legal challenges), then the market will be settled on the winner decided by Congress, on the date on which the Electoral College votes are counted in a joint session of Congress.<br><br>This market will be void if an election does not take place in 2028. If more than one election takes place in 2028, then this market will apply to the first election that is held.<br><br>Once voting (whether postal, electronic or at the ballot box) begins in the year 2028 for the US Presidential Election 2028, the election will be deemed to have taken place for the purposes of this market. We will then settle the market as per our rules regardless of whether the election process is fully completed in 2028 or beyond.<br><br>If there is any material change to the established role or any ambiguity as to who occupies the position, then Betfair may determine, using its reasonable discretion, how to settle the market based on all the information available to it at the relevant time.<br><br> Betfair reserves the right to wait for further official announcements before the market is settled.<br><br>Betfair expressly reserves the right to suspend and/or void any and all bets on this market at any time if Betfair is not satisfied (in its absolute discretion) with the certainty of the outcome.<br><br>Betfair may suspend betting on the market at any time in the interests of maintaining integrity and fairness in the markets.<br><br>Additional candidates may be added to this market on request.<br><br>Please note that candidates in this market will not be partially settled and will remain in the market until it is fully settled. This is to allow customers to continue trading candidates that they have positions on and because each candidate is still a valid runner in this market. The only exception is if a candidate dies before they are elected in which case we will partially settle that candidate as a loser.<br><br>If any candidate withdraws for any reason, all bets on the market will stand and be settled as per the defined rules.<br><br>Customers should be aware that:<br><br>Transmissions described as \u201clive\u201d by some broadcasters may actually be delayed.The extent of any such delay may vary, depending on the set-up through which they are receiving pictures or data.",
+   "rulesHasDate": false,
+   "priceLadderDescription": {
+    "type": "CLASSIC"
+   }
+  },
+  "totalMatched": 2289428.7902,
+  "runners": [
+   {
+    "selectionId": 45008858,
+    "runnerName": "JD Vance",
+    "handicap": 0.0,
+    "sortPriority": 1
+   },
+   {
+    "selectionId": 12979521,
+    "runnerName": "Jon Ossoff",
+    "handicap": 0.0,
+    "sortPriority": 2
+   },
+   {
+    "selectionId": 20036602,
+    "runnerName": "Alexandria Ocasio-Cortez",
+    "handicap": 0.0,
+    "sortPriority": 3
+   }
+  ],
+  "event": {
+   "id": "33761494",
+   "name": "USA - Presidential Election 2028",
+   "countryCode": "US",
+   "timezone": "Europe/London",
+   "openDate": "2028-11-07T11:00:00.000Z"
+  }
+ }
+]

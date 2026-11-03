@@ -222,6 +222,43 @@ class PaperConfig:
 
 
 @dataclass
+class BetfairFilter:
+    """One market-discovery filter. `domain` names the signal source
+    (betfair_<domain>), so politics and racing can be told apart downstream."""
+    domain: str
+    event_type_ids: list[str] = field(default_factory=list)
+    market_countries: list[str] = field(default_factory=list)
+    market_type_codes: list[str] = field(default_factory=list)
+    text_query: str | None = None
+    lookahead_hours: float | None = None   # None = no start-time limit
+    max_markets: int = 40                  # 40 = one listMarketBook call
+
+
+@dataclass
+class BetfairThresholds:
+    odds_move_pp: float = 5.0          # implied-probability move, percentage points
+    odds_move_pp_high: float = 15.0
+    matched_surge: float = 5000.0      # market totalMatched increase per poll
+    matched_surge_high: float = 50000.0
+    max_spread_pp: float = 5.0         # back/lay spread in pp; wider = too thin
+    min_market_matched: float = 10000.0
+
+
+@dataclass
+class BetfairConfig:
+    enabled: bool = False
+    identity_url: str = "https://identitysso.betfair.com.au/api/"
+    api_url: str = "https://api.betfair.com/exchange/"
+    login: str = "interactive"         # or "cert"
+    poll_interval_seconds: int = 30
+    discovery_interval_seconds: int = 600
+    poll_in_play: bool = False
+    filters: list[BetfairFilter] = field(default_factory=list)
+    pinned_markets: dict[str, str] = field(default_factory=dict)  # market_id -> domain
+    thresholds: BetfairThresholds = field(default_factory=BetfairThresholds)
+
+
+@dataclass
 class CorrelationConfig:
     # Sources that never take part in a correlation, as anchor or as joined
     # signal (plan 06: betfair_racing moves are unrelated to geopolitics).
@@ -240,6 +277,7 @@ class Config:
     dashboard: DashboardConfig
     paper: PaperConfig = field(default_factory=PaperConfig)
     correlation: CorrelationConfig = field(default_factory=CorrelationConfig)
+    betfair: BetfairConfig = field(default_factory=BetfairConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +345,49 @@ def _parse_truth_social(data: dict) -> TruthSocialConfig:
         critical_keywords=list(data.get("critical_keywords", [])),
         endorsement_markers=list(data.get("endorsement_markers", ["endorse", "endorsement"])),
         default_priority=default_priority,
+    )
+
+
+def _parse_betfair(data: dict) -> BetfairConfig:
+    login = str(data.get("login", "interactive"))
+    if login not in ("interactive", "cert"):
+        raise ConfigValidationError(f"betfair.login must be interactive or cert, got {login!r}")
+    filters = []
+    for raw in data.get("filters") or []:
+        if not raw.get("domain"):
+            raise ConfigValidationError("every betfair.filters entry needs a domain")
+        look = raw.get("lookahead_hours")
+        filters.append(BetfairFilter(
+            domain=str(raw["domain"]),
+            event_type_ids=[str(x) for x in raw.get("event_type_ids") or []],
+            market_countries=[str(x) for x in raw.get("market_countries") or []],
+            market_type_codes=[str(x) for x in raw.get("market_type_codes") or []],
+            text_query=raw.get("text_query"),
+            lookahead_hours=float(look) if look is not None else None,
+            max_markets=int(raw.get("max_markets", 40)),
+        ))
+    t = data.get("thresholds") or {}
+    d = BetfairThresholds()
+    thresholds = BetfairThresholds(
+        odds_move_pp=float(t.get("odds_move_pp", d.odds_move_pp)),
+        odds_move_pp_high=float(t.get("odds_move_pp_high", d.odds_move_pp_high)),
+        matched_surge=float(t.get("matched_surge", d.matched_surge)),
+        matched_surge_high=float(t.get("matched_surge_high", d.matched_surge_high)),
+        max_spread_pp=float(t.get("max_spread_pp", d.max_spread_pp)),
+        min_market_matched=float(t.get("min_market_matched", d.min_market_matched)),
+    )
+    defaults = BetfairConfig()
+    return BetfairConfig(
+        enabled=bool(data.get("enabled", False)),
+        identity_url=str(data.get("identity_url", defaults.identity_url)),
+        api_url=str(data.get("api_url", defaults.api_url)),
+        login=login,
+        poll_interval_seconds=int(data.get("poll_interval_seconds", 30)),
+        discovery_interval_seconds=int(data.get("discovery_interval_seconds", 600)),
+        poll_in_play=bool(data.get("poll_in_play", False)),
+        filters=filters,
+        pinned_markets={str(k): str(v) for k, v in (data.get("pinned_markets") or {}).items()},
+        thresholds=thresholds,
     )
 
 
@@ -564,6 +645,7 @@ def load_config(path: str) -> Config:
         dashboard=_parse_dashboard(raw.get("dashboard", {})),
         paper=_parse_paper(raw.get("paper") or {}),
         correlation=_parse_correlation(raw.get("correlation") or {}),
+        betfair=_parse_betfair(raw.get("betfair") or {}),
     )
     logger.info("Config loaded from %s", path)
     return cfg
