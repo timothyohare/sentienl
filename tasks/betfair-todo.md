@@ -29,6 +29,7 @@ first, and the change is committed and pushed.
 - [x] Task 6: `correlation.exclude_sources`, racing excluded (S), in `bacf5f9`
 
 ### Checkpoint 2: gate-ci green; mutation ≥ 60% on new modules
+- [x] Met 2026-11-03: `betfair.py` 89% (452/506, the 16 no-tests are `run()`), `betfair_client.py` 72% (162/226), `_parse_betfair` 92% (196/212). gate-ci green, 861 passed
 
 ## Phase 3: Measurement and operations
 - [x] Task 7: `BetfairPriceFetcher` (M), in `c80b9b0`. Live-tested. **Still needs the price-followup restart** (see human list)
