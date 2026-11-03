@@ -4,8 +4,29 @@ These need a person: an account, money, a legal or terms judgement, or a
 decision. The agent can't do them. Each one lists what it unblocks. Details
 are in `plans/06-betfair-exchange.md`.
 
+## ⏩ Do first (morning of 2026-11-04): start the collector
+
+The agent was blocked from installing a persistent service. Run these
+yourself (each line is safe to re-run):
+
+```bash
+cd ~/dev/newdev/Sentinel
+cp deploy/systemd/sentinel-betfair.service deploy/systemd/sentinel.target ~/.config/systemd/user/
+mkdir -p ~/.config/systemd/user/sentinel-betfair.service.d
+cp ~/.config/systemd/user/sentinel-kalshi.service.d/oom-protect.conf ~/.config/systemd/user/sentinel-betfair.service.d/
+systemctl --user daemon-reload
+systemctl --user enable --now sentinel-betfair.service
+systemctl --user restart sentinel-price-followup.service   # picks up BetfairPriceFetcher
+journalctl --user -u sentinel-betfair -n 20 --no-pager     # expect "login OK" + "40 markets tracked"
+```
+
+`config.yaml` already has the `betfair:` section (politics only, the 5 US
+midterm markets pinned). Alerts are still off, so this only collects.
+US results land during the AEDT morning, so the sooner it starts, the more
+of the midterm move it catches.
+
 ## Before any spike can run
-- [ ] **H1: Betfair Australia account.** *(2026-11-03: account created, login
+- [x] **H1: Betfair Australia account.** *(The key works as of 21:16 AEDT; it was a delay, not verification.)* *(2026-11-03: account created, login
       works, but every API call returns `INVALID_APP_KEY`, probably until
       identity verification and/or a first deposit is done. Check the account
       status page.)* Sign up or log in at betfair.com.au
@@ -25,7 +46,7 @@ are in `plans/06-betfair-exchange.md`.
       → Automated Betting Program Access → upload
       `~/.config/sentinel/betfair/client-2048.crt` (the **.crt**, never the .key).
       Expires 2027-11-03. → unblocks cert login in S1/Task 2
-- [ ] **H5: Put credentials in `.env`** with the `betfair_` prefix only:
+- [x] **H5: Put credentials in `.env`** *(done)* with the `betfair_` prefix only:
       `betfair_username=`, `betfair_password=`, `betfair_app_key=`
       (+ `betfair_cert_path=` if H4). Don't reuse bare `username=`/`password=`
       (that collision caused the 2026-08-11 outage). Note whether 2FA is on.

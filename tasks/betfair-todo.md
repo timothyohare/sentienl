@@ -9,30 +9,30 @@ first, and the change is committed and pushed.
 
 ## Phase 0: Spikes
 - [x] S4: Library choice → `betfairlightweight==2.24.0`, lightweight mode, explicit URIs (done 2026-11-03; plan §4.1)
-- [ ] S1: Auth, endpoint, session TTL, delayed-key delay (2h). **Partial:** interactive login via `identitysso.betfair.com.au` works for a bot (no cert needed so far); data calls blocked by `INVALID_APP_KEY` pending H1
-- [ ] S2: Capture fixtures, confirm event type IDs, weight limit, markets per racing day (2h). Blocked on S1
-- [ ] S3: Historical data check: Melbourne Cup 2026 + one politics market (2h). Blocked on H1
+- [x] S1: Interactive login via `identitysso.betfair.com.au` works; all three API hosts serve the same markets (use `api.betfair.com`). The new key gave `INVALID_APP_KEY` at first and worked ~15 min later. *Not measured:* real delay (a quiet market didn't trade in the 60s window) and session TTL (library assumes 12h)
+- [x] S2: Fixtures in `tests/fixtures/betfair/`. Racing `7`, politics `2378961`. Weight limit 40 (best offers) / 10 (+traded), exactly. The delayed key gives market `totalMatched` but runner `totalMatched` = 0.0 and no `tradedVolume`. 37 AU WIN markets in the 21:00 AEDT catalogue
+- [ ] S3: **Partly answered:** Betfair's free BSP CSVs (promo.betfair.com/betfairsp/prices) cover AU racing daily back to ~2018. Still to do: replay through the detectors (Task 9)
 - [ ] S5 (optional): Betfair vs Kalshi lead/lag on the US midterms (2h). Blocked on S3
 
 ### Checkpoint 0: decisions locked; fixtures committed; human go/no-go (H5, H6)
 
 ## Phase 1: One pinned market → signal in DB
-- [ ] Task 1: `betfair:` config + `betfair_`-prefixed creds (S)
-- [ ] Task 2: Read-only `BetfairClient` behind a protocol; login cap; weight batching; guard test (M)
-- [ ] Task 3: Pinned-market `odds_move` end to end + runner (M)
+- [x] Task 1: `betfair:` config + `betfair_`-prefixed creds (S), in `827c2d6`
+- [x] Task 2: Read-only `BetfairClient`; login cap; weight batching; guard test (M), in `827c2d6`. Smoke-tested live
+- [x] Task 3: `odds_move` end to end + runner (M), in `3d7a2e7`. Live foreground run: login → 40 markets → 326 baselines over 6 cycles
 
 ### Checkpoint 1: 24h live on 1–3 pinned markets; human sample review (H8)
 
 ## Phase 2: Discovery and full signals
-- [ ] Task 4: Market discovery + lifecycle registry, with integration replay (M)
-- [ ] Task 5: `matched_surge` + `volume_spike` with tiering and dedup (M). Can run in parallel with T4
-- [ ] Task 6: `correlation.exclude_sources`, racing excluded (S)
+- [x] Task 4: Discovery + lifecycle registry, with integration replay (M), in `3d7a2e7`
+- [x] Task 5: `matched_surge` at **market level** (the delayed key has no runner volume). `volume_spike` (rolling baseline) dropped for v1 (M), in `3d7a2e7`
+- [x] Task 6: `correlation.exclude_sources`, racing excluded (S), in `bacf5f9`
 
 ### Checkpoint 2: gate-ci green; mutation ≥ 60% on new modules
 
 ## Phase 3: Measurement and operations
-- [ ] Task 7: Price follow-through + `BetfairPriceFetcher`; **restart price-followup** (M)
-- [ ] Task 8: systemd unit, healthcheck entry, CLAUDE.md, memory (S)
+- [x] Task 7: `BetfairPriceFetcher` (M), in `c80b9b0`. Live-tested. **Still needs the price-followup restart** (see human list)
+- [~] Task 8: Unit file, `sentinel.target`, healthcheck (lockout → DOWN), CLAUDE.md done. **Installing/enabling the unit was blocked for the agent**, so Tim needs to run it (see human list)
 - [ ] Task 9: Calibrate thresholds from S3 + first live week (S)
 
 ### Checkpoint 3: §1.5 success criteria with evidence; human review (H9)
