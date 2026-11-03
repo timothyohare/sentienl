@@ -18,6 +18,7 @@ from sentinel.collectors.betfair_client import (
     LoginLockout,
     batch_ids,
     load_credentials,
+    read_env_file,
 )
 from sentinel.core.config import BetfairConfig
 
@@ -274,3 +275,13 @@ def test_guard_pattern_catches_both_spellings():
     assert ORDER_METHODS.search("client.betting.place_orders(")
     assert ORDER_METHODS.search('"SportsAPING/v1.0/placeOrders"')
     assert not ORDER_METHODS.search("list_market_book")
+
+
+class TestReadEnvFile:
+    def test_parses_and_skips_comments_and_blanks(self, tmp_path):
+        p = tmp_path / ".env"
+        p.write_text("# comment\n\nbetfair_username = u \nnoequals\nbetfair_password=a=b\n")
+        assert read_env_file(str(p)) == {"betfair_username": "u", "betfair_password": "a=b"}
+
+    def test_missing_file_is_empty(self, tmp_path):
+        assert read_env_file(str(tmp_path / "nope")) == {}

@@ -482,3 +482,77 @@ class TestTick:
         client.locked_out = True
         col.tick()
         assert db.state.get("betfair_login_locked_out") is not None
+
+
+# ---------------------------------------------------------------------------
+# Mutation-driven additions (2026-11-03): full payloads, inclusive limits,
+# tracking row linked to its signal, runner-name fallback.
+# ---------------------------------------------------------------------------
+
+class TestPayloadsAndBoundaries:
+    def _col(self, db, client, clock, **thr):
+        client.catalogues["2378961"] = [_cat("1.1", event="Ev", name="Mk")]
+        t = dict(min_market_matched=1000, max_spread_pp=5.0,
+                 matched_surge=5000, matched_surge_high=50000)
+        t.update(thr)
+        col = _collector(db, client, clock, thresholds=BetfairThresholds(**t))
+        col.discover()
+        return col
+
+    def test_odds_move_payload_is_complete(self, db, client, clock):
+        col = self._col(db, client, clock)
+        _poll_prices(col, client, clock, 2.0, 100 / 70, total=50000.0)
+        (s,) = [x for x in _signals(db) if x["type"] == "odds_move"]
+        p = s["payload"]
+        assert p["market_name"] == "Mk" and p["event_name"] == "Ev"
+        assert p["last_price_traded"] == pytest.approx(100 / 70)
+        assert p["spread_pp"] == pytest.approx(
+            100 / (100 / 70 - 0.02) - 100 / (100 / 70 + 0.02))
+        assert p["market_total_matched"] == 50000.0
+        assert p["is_delayed"] is True
+
+    def test_tracking_row_points_at_its_signal(self, db, client, clock):
+        col = self._col(db, client, clock)
+        _poll_prices(col, client, clock, 2.0, 100 / 70)
+        sig_id = db.execute("SELECT id FROM signals WHERE signal_type='odds_move'").fetchone()[0]
+        assert db.execute("SELECT signal_id FROM post_price_tracking").fetchone()[0] == sig_id
+
+    def test_unnamed_runner_uses_selection_id(self, db, client, clock):
+        client.catalogues["2378961"] = [_cat("1.1", runners=())]
+        col = _collector(db, client, clock)
+        col.discover()
+        _poll_prices(col, client, clock, 2.0, 100 / 70)
+        assert _signals(db)[0]["payload"]["runner_name"] == "1"
+
+    def test_volume_exactly_at_minimum_is_allowed(self, db, client, clock):
+        col = self._col(db, client, clock, min_market_matched=50000)
+        _poll_prices(col, client, clock, 2.0, 100 / 70, total=50000.0)
+        assert [s["type"] for s in _signals(db)] == ["odds_move"]
+
+    def test_spread_exactly_at_maximum_is_allowed(self, db, client, clock):
+        col = self._col(db, client, clock, max_spread_pp=10.0)
+        client.books.append([_book("1.1", [_runner(1, 4.0, 3.9, 4.1)])])
+        col.poll()
+        clock.t += 30
+        client.books.append([_book("1.1", [_runner(1, 2.25, 2.0, 2.5)])])  # spread exactly 10pp
+        col.poll()
+        assert [s["type"] for s in _signals(db)] == ["odds_move"]
+
+    def test_matched_surge_payload_and_minimum_inclusive(self, db, client, clock):
+        col = self._col(db, client, clock, min_market_matched=106000)
+        for total in (100000, 106000):
+            client.books.append([_book("1.1", [_runner(1, 2.0, 1.98, 2.02)], total=total)])
+            col.poll()
+            clock.t += 30
+        (s,) = [x for x in _signals(db) if x["type"] == "matched_surge"]
+        p = s["payload"]
+        assert (p["market_id"], p["market_name"], p["event_name"]) == ("1.1", "Mk", "Ev")
+        assert p["previous_matched"] == 100000 and p["is_delayed"] is True
+
+    def test_missing_total_matched_counts_as_zero(self, db, client, clock):
+        col = self._col(db, client, clock)
+        book = _book("1.1", [_runner(1, 2.0, 1.98, 2.02)])
+        del book["totalMatched"]
+        client.books.append([book])
+        col.poll()
+        assert float(db.state.get("betfair_prev_matched_1.1").split("|")[0]) == 0.0
