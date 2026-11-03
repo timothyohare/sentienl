@@ -39,6 +39,12 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from sentinel.collectors.betfair import runner_pp
+from sentinel.collectors.betfair_client import (
+    BetfairClient,
+    load_credentials,
+    read_env_file,
+)
 from sentinel.collectors.kalshi import KALSHI_API_BASE
 from sentinel.core.config import PaperConfig, load_config
 from sentinel.core.db import Database
@@ -267,6 +273,32 @@ class AsxPriceFetcher:
         return self._get_price_yfinance(instrument)
 
 
+class BetfairPriceFetcher:
+    """Current implied probability (0-1) for a Betfair runner. The instrument
+    is "<market_id>:<selection_id>". A closed or settled market returns None,
+    so racing signals usually only get t15 (plan 06 §2.5)."""
+
+    def __init__(self, client: Any):
+        self._client = client
+
+    def get_price(self, source: str, instrument: str) -> float | None:
+        if not source.startswith("betfair_"):
+            return None
+        market_id, _, sel = instrument.partition(":")
+        try:
+            selection_id = int(sel)
+        except ValueError:
+            return None
+        for book in self._client.list_market_book([market_id]):
+            if book.get("status") == "CLOSED":
+                return None
+            for runner in book.get("runners") or []:
+                if runner.get("selectionId") == selection_id:
+                    pp = runner_pp(runner)
+                    return pp / 100.0 if pp is not None else None
+        return None
+
+
 class CompositePriceFetcher:
     """Dispatches to the first fetcher that recognises the row's `source`."""
 
@@ -376,7 +408,15 @@ def main():
         ib_port=cfg.asx.ib_port,
         ib_client_id_base=cfg.asx.ib_client_id_base,
     )
-    fetcher = CompositePriceFetcher([KalshiPriceFetcher(), futures_fetcher, asx_fetcher])
+    fetchers: list[PriceFetcherProtocol] = [KalshiPriceFetcher(), futures_fetcher, asx_fetcher]
+    if cfg.betfair.enabled:
+        try:
+            creds = load_credentials(
+                read_env_file(os.environ.get("SENTINEL_ENV", ".env")))
+            fetchers.append(BetfairPriceFetcher(BetfairClient(cfg.betfair, creds)))
+        except ValueError as exc:
+            logger.error("Betfair price follow-through disabled: %s", exc)
+    fetcher = CompositePriceFetcher(fetchers)
 
     if args.once:
         _log_pass(*run_pass(db, fetcher, cfg.paper))

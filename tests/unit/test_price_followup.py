@@ -14,6 +14,7 @@ from sentinel.core.config import PaperConfig, PaperCost
 from sentinel.core.db import Database
 from sentinel.scripts.price_followup import (
     AsxPriceFetcher,
+    BetfairPriceFetcher,
     CompositePriceFetcher,
     FuturesPriceFetcher,
     due_updates,
@@ -498,3 +499,52 @@ class TestRunPass:
         _, _, ledger = run_pass(mock_db, FakeFetcher({}), PaperConfig(enabled=False))
         assert ledger is None
         assert mock_db.state.get("paper_ledger:fade60:start_at") is None
+
+
+# ---------------------------------------------------------------------------
+# BetfairPriceFetcher (plan 06, Task 7)
+# ---------------------------------------------------------------------------
+
+class _BookClient:
+    def __init__(self, books):
+        self.books = books
+        self.calls = []
+
+    def list_market_book(self, market_ids):
+        self.calls.append(market_ids)
+        return self.books
+
+
+def _bf_book(status="OPEN", ltp=2.5, sel=7):
+    return [{"marketId": "1.5", "status": status, "runners": [
+        {"selectionId": sel, "status": "ACTIVE", "lastPriceTraded": ltp, "ex": {}}]}]
+
+
+class TestBetfairPriceFetcher:
+    def test_ignores_other_sources(self):
+        client = _BookClient(_bf_book())
+        assert BetfairPriceFetcher(client).get_price("kalshi", "1.5:7") is None
+        assert client.calls == []
+
+    def test_returns_implied_probability(self):
+        client = _BookClient(_bf_book(ltp=2.5))
+        price = BetfairPriceFetcher(client).get_price("betfair_politics", "1.5:7")
+        assert price == pytest.approx(0.4)
+        assert client.calls == [["1.5"]]
+
+    def test_closed_market_returns_none(self):
+        assert BetfairPriceFetcher(_BookClient(_bf_book(status="CLOSED"))).get_price(
+            "betfair_racing", "1.5:7") is None
+
+    def test_missing_runner_returns_none(self):
+        assert BetfairPriceFetcher(_BookClient(_bf_book(sel=8))).get_price(
+            "betfair_politics", "1.5:7") is None
+
+    def test_empty_book_returns_none(self):
+        assert BetfairPriceFetcher(_BookClient([])).get_price(
+            "betfair_politics", "1.5:7") is None
+
+    @pytest.mark.parametrize("bad", ["1.5", "1.5:x", ""])
+    def test_malformed_instrument_returns_none(self, bad):
+        assert BetfairPriceFetcher(_BookClient(_bf_book())).get_price(
+            "betfair_politics", bad) is None
