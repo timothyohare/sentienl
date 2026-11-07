@@ -60,14 +60,20 @@ def _best(runner: dict[str, Any], side: str) -> float | None:
 
 
 def runner_pp(runner: dict[str, Any]) -> float | None:
-    """Last traded price as implied pp, else the back/lay midpoint."""
+    """A runner's implied probability in pp.
+
+    Uses the last traded price only while it sits inside the current
+    back/lay quotes. On thin markets one stray trade far from the quotes
+    made the value flip every poll (midterm night, 2026-11-04), so the
+    back/lay midpoint wins then. With a one-sided book the LTP is kept.
+    """
     ltp = implied_pp(runner.get("lastPriceTraded"))
-    if ltp is not None:
-        return ltp
     back = implied_pp(_best(runner, "availableToBack"))
     lay = implied_pp(_best(runner, "availableToLay"))
     if back is None or lay is None:
-        return None
+        return ltp
+    if ltp is not None and lay <= ltp <= back:
+        return ltp
     return (back + lay) / 2
 
 

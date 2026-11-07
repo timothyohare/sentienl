@@ -69,6 +69,29 @@ class TestRunnerPp:
         assert runner_pp(_runner()) is None
         assert runner_pp(_runner(back=2.0)) is None
 
+    def test_ltp_outside_spread_uses_midpoint(self):
+        # Midterm night: a stray trade at 200.0 (0.5pp) on a book quoted
+        # 12.0/13.0 (8.3/7.7pp) made the signal flip 8 -> 0.5 -> 8 each poll.
+        assert runner_pp(_runner(ltp=200.0, back=12.0, lay=13.0)) == pytest.approx(
+            (100 / 12.0 + 100 / 13.0) / 2)
+
+    def test_ltp_below_spread_uses_midpoint(self):
+        assert runner_pp(_runner(ltp=1.5, back=2.0, lay=2.5)) == pytest.approx(45.0)
+
+    def test_ltp_on_spread_edges_is_kept(self):
+        assert runner_pp(_runner(ltp=2.0, back=2.0, lay=2.5)) == 50.0
+        assert runner_pp(_runner(ltp=2.5, back=2.0, lay=2.5)) == 40.0
+
+    def test_ltp_with_one_sided_book_is_kept(self):
+        assert runner_pp(_runner(ltp=4.0, back=3.0)) == 25.0
+        assert runner_pp(_runner(ltp=4.0, lay=5.0)) == 25.0
+
+    def test_flicker_produces_no_odds_move(self):
+        """Same quotes, LTP alternating far outside them: value stays put."""
+        a = runner_pp(_runner(ltp=200.0, back=12.0, lay=13.0))
+        b = runner_pp(_runner(ltp=12.5, back=12.0, lay=13.0))
+        assert a is not None and b is not None and abs(a - b) < 1.0
+
     def test_fixture_runner(self):
         r = load_fixture("listMarketBook_best.json")[0]["runners"][0]
         assert runner_pp(r) == pytest.approx(100 / r["lastPriceTraded"])

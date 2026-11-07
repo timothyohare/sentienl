@@ -196,6 +196,7 @@ DISTINCT_CONFIG_YAML = textwrap.dedent("""\
       tracked_event_tickers: ["EVENTX"]
       thresholds:
         large_bet_contracts: 250
+        large_bet_usd: 7500
         odds_move_pct_5min: 8.5
         volume_spike_multiplier: 6.0
         min_absolute_volume: 125
@@ -637,6 +638,7 @@ class TestAllDefaults:
         assert k.api_base_url == "https://external-api.kalshi.com/trade-api/v2"
         assert k.tracked_event_tickers == []
         assert k.thresholds.large_bet_contracts == 100
+        assert k.thresholds.large_bet_usd is None
         assert k.thresholds.odds_move_pct_5min == 5.0
         assert k.thresholds.volume_spike_multiplier == 3.0
         assert k.thresholds.min_absolute_volume == 50
@@ -926,6 +928,7 @@ class TestDistinctValues:
         assert k.api_base_url == "https://custom-kalshi.example"
         assert k.tracked_event_tickers == ["EVENTX"]
         assert k.thresholds.large_bet_contracts == 250
+        assert k.thresholds.large_bet_usd == 7500
         assert k.thresholds.odds_move_pct_5min == 8.5
         assert k.thresholds.volume_spike_multiplier == 6.0
         assert k.thresholds.min_absolute_volume == 125

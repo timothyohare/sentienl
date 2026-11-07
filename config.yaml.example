@@ -44,6 +44,7 @@ kalshi:
     - KXRUSUKR                        # Russia-Ukraine
   thresholds:
     large_bet_contracts: 100          # contract count threshold for large_bet signal
+    large_bet_usd: 5000               # optional: dollars paid (contracts x price); overrides the count
     odds_move_pct_5min: 5.0           # percentage point shift between polls
     volume_spike_multiplier: 3.0      # 24h volume vs lifetime daily average
     min_absolute_volume: 50           # absolute floor to avoid thin-market noise
@@ -171,6 +172,7 @@ betfair:
   filters:                      # each filter's domain -> signal source betfair_<domain>
     - domain: politics
       event_type_ids: ["2378961"]
+      market_countries: ["US"]
       max_markets: 40
     # - domain: racing
     #   event_type_ids: ["7"]

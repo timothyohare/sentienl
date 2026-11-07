@@ -19,6 +19,7 @@ from sentinel.collectors.kalshi import (
     _calculate_volume_spike,
     _is_large_bet,
     _is_odds_move,
+    _trade_notional_usd,
 )
 from sentinel.core.db import Database
 
@@ -41,6 +42,7 @@ def mock_config():
     cfg.kalshi.api_base_url = KALSHI_API_BASE
     cfg.kalshi.tracked_event_tickers = ["KXMIDEASTWAR", "KXTRUMPTARIFF"]
     cfg.kalshi.thresholds.large_bet_contracts = 100
+    cfg.kalshi.thresholds.large_bet_usd = None  # contract-count rule unless a test sets it
     cfg.kalshi.thresholds.odds_move_pct_5min = 5.0
     cfg.kalshi.thresholds.volume_spike_multiplier = 3.0
     cfg.kalshi.thresholds.min_absolute_volume = 50
@@ -85,6 +87,19 @@ SAMPLE_TRADE = {
 # ---------------------------------------------------------------------------
 # Signal detection helpers
 # ---------------------------------------------------------------------------
+
+class TestTradeNotionalUsd:
+    """Midterm night: 18,324 contracts at $0.005 (~$92) fired as a 'large bet'."""
+
+    def test_yes_taker_pays_yes_price(self):
+        assert _trade_notional_usd(18323.75, 0.005, "yes") == pytest.approx(91.61875)
+
+    def test_no_taker_pays_one_minus_yes_price(self):
+        assert _trade_notional_usd(1000, 0.30, "no") == pytest.approx(700.0)
+
+    def test_unknown_side_uses_yes_price(self):
+        assert _trade_notional_usd(100, 0.40, "?") == pytest.approx(40.0)
+
 
 class TestIsLargeBet:
     def test_above_threshold(self):
@@ -270,6 +285,35 @@ class TestProcessMarket:
         signals = mock_db.get_recent_signals()
         large_bet_signals = [s for s in signals if s["signal_type"] == "large_bet"]
         assert len(large_bet_signals) == 0
+
+    def _large_bets_for(self, collector, mock_db, **trade):
+        collector._thresholds.large_bet_usd = 5000
+        collector.set_last_trade_id(SAMPLE_MARKET["ticker"], "seed-trade-0")
+        self._mock_trades(collector, [dict(SAMPLE_TRADE, **trade)])
+        collector.process_market(SAMPLE_MARKET)
+        return [s for s in mock_db.get_recent_signals() if s["signal_type"] == "large_bet"]
+
+    def test_usd_rule_ignores_many_cheap_contracts(self, collector, mock_db):
+        assert self._large_bets_for(
+            collector, mock_db, count_fp="18323.75", yes_price_dollars="0.0050") == []
+
+    def test_usd_rule_fires_on_dollar_value(self, collector, mock_db):
+        sigs = self._large_bets_for(
+            collector, mock_db, count_fp="10000.00", yes_price_dollars="0.5000")
+        assert len(sigs) == 1
+        assert sigs[0]["payload"]["notional_usd"] == pytest.approx(5000.0)
+        assert "$5,000" in sigs[0]["summary"]
+
+    def test_usd_rule_just_below_threshold(self, collector, mock_db):
+        assert self._large_bets_for(
+            collector, mock_db, count_fp="9999.00", yes_price_dollars="0.5000") == []
+
+    def test_usd_rule_prices_no_side_correctly(self, collector, mock_db):
+        # Buying NO at yes=0.10 costs 0.90 a contract: 6000 x 0.90 = $5,400.
+        sigs = self._large_bets_for(
+            collector, mock_db, count_fp="6000.00", yes_price_dollars="0.1000",
+            taker_side="no")
+        assert len(sigs) == 1
 
     def test_inactive_market_skipped(self, collector, mock_db):
         inactive = dict(SAMPLE_MARKET)

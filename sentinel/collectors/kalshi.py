@@ -5,7 +5,8 @@ Polls the Kalshi public REST API for unusual trading activity in configured
 event markets. Writes signals directly to SQLite.
 
 Signal types generated:
-  - large_bet:     Single trade > configured contract threshold
+  - large_bet:     Single trade >= large_bet_usd dollars paid (or, if unset,
+                   >= large_bet_contracts contracts)
   - odds_move:     Price shift >= configured percentage points since last poll
   - volume_spike:  24hr volume exceeds baseline by configured multiplier
 
@@ -52,6 +53,12 @@ RATE_LIMIT_MAX_SLEEP = 10.0
 def _is_large_bet(count_fp: float, threshold: float) -> bool:
     """Return True if the trade contract count exceeds the threshold."""
     return count_fp >= threshold
+
+
+def _trade_notional_usd(count_fp: float, yes_price: float, taker_side: str) -> float:
+    """Dollars the taker paid: YES costs yes_price, NO costs 1 - yes_price."""
+    price = 1.0 - yes_price if taker_side == "no" else yes_price
+    return count_fp * price
 
 
 def _is_odds_move(
@@ -267,8 +274,17 @@ class KalshiCollector:
             taker_side = trade.get("taker_side", "?")
 
             # --- Large bet signal ---
-            if _is_large_bet(count_fp, self._thresholds.large_bet_contracts):
-                logger.info("Large bet detected: %.0f contracts on %s", count_fp, ticker)
+            notional = _trade_notional_usd(count_fp, yes_price, taker_side)
+            usd_threshold = self._thresholds.large_bet_usd
+            if usd_threshold is not None:
+                is_large = notional >= usd_threshold
+            else:
+                is_large = _is_large_bet(count_fp, self._thresholds.large_bet_contracts)
+            if is_large:
+                logger.info(
+                    "Large bet detected: %.0f contracts ($%.0f) on %s",
+                    count_fp, notional, ticker,
+                )
                 signal_id = self.db.insert_signal(
                     source="kalshi",
                     signal_type="large_bet",
@@ -276,12 +292,16 @@ class KalshiCollector:
                     payload={
                         "trade_id": trade_id,
                         "contracts": count_fp,
+                        "notional_usd": round(notional, 2),
                         "yes_price": yes_price,
                         "taker_side": taker_side,
                         "ticker": ticker,
                         "market_title": market_title,
                     },
-                    summary=f"Large bet {count_fp:,.0f} contracts ({taker_side}) on {market_title}",
+                    summary=(
+                        f"Large bet {count_fp:,.0f} contracts (${notional:,.0f}, "
+                        f"{taker_side}) on {market_title}"
+                    ),
                 )
                 self._maybe_track_price(signal_id, "HIGH", ticker, yes_price)
 

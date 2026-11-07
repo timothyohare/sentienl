@@ -69,6 +69,10 @@ class KalshiThresholds:
     min_absolute_volume: float
     odds_move_pct_high: float
     volume_spike_multiplier_high: float
+    # When set, large_bet means dollars at risk (contracts x price paid), not
+    # a contract count; penny contracts made the count rule fire 36k times on
+    # midterm night. None keeps the old contract-count rule.
+    large_bet_usd: float | None = None
 
 
 @dataclass
@@ -407,6 +411,11 @@ def _parse_kalshi(data: dict) -> KalshiConfig:
         odds_move_pct_high=float(thresholds_raw.get("odds_move_pct_high", 15.0)),
         volume_spike_multiplier_high=float(
             thresholds_raw.get("volume_spike_multiplier_high", 50.0)
+        ),
+        large_bet_usd=(
+            float(thresholds_raw["large_bet_usd"])
+            if thresholds_raw.get("large_bet_usd") is not None
+            else None
         ),
     )
     return KalshiConfig(
