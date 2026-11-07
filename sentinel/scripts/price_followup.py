@@ -31,6 +31,7 @@ import logging
 import os
 import sys
 import time as time_module
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -128,8 +129,20 @@ def random_window_effect_sizes(
     can match. Results are ordered by lag, then by i — callers only take
     medians/rates, so order is irrelevant.
     """
+    chunks = list(iter_random_window_effects(samples, horizon_minutes, tolerance_minutes))
+    return np.concatenate(chunks).tolist() if chunks else []
+
+
+def iter_random_window_effects(
+    samples: list[dict[str, Any]],
+    horizon_minutes: float,
+    tolerance_minutes: float | None = None,
+) -> Iterator[np.ndarray]:
+    """Same pairs as random_window_effect_sizes(), yielded one numpy chunk per
+    lag so callers can count or subsample without holding every pair: on
+    1.4M Kalshi samples the full t1440 list didn't fit in memory."""
     if len(samples) < 2:
-        return []
+        return
     tolerance = tolerance_minutes if tolerance_minutes is not None else horizon_minutes * 0.2
     lower, upper = horizon_minutes - tolerance, horizon_minutes + tolerance
     times = np.array([
@@ -137,7 +150,6 @@ def random_window_effect_sizes(
         for s in samples
     ])
     prices = np.array([s["price"] for s in samples], dtype=float)
-    chunks = []
     for lag in range(1, len(samples)):
         gaps = times[lag:] - times[:-lag]
         if gaps.min() > upper:
@@ -145,8 +157,7 @@ def random_window_effect_sizes(
         in_window = (gaps >= lower) & (gaps <= upper)
         if in_window.any():
             start, end = prices[:-lag][in_window], prices[lag:][in_window]
-            chunks.append(np.abs(end - start) / np.abs(start))
-    return np.concatenate(chunks).tolist() if chunks else []
+            yield np.abs(end - start) / np.abs(start)
 
 
 # ---------------------------------------------------------------------------

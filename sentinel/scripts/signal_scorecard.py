@@ -44,11 +44,13 @@ from datetime import datetime, time
 from statistics import median
 from zoneinfo import ZoneInfo
 
+import numpy as np
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from sentinel.core.db import Database
 from sentinel.scripts.price_followup import HORIZONS as HORIZON_MINUTES
-from sentinel.scripts.price_followup import random_window_effect_sizes
+from sentinel.scripts.price_followup import iter_random_window_effects
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("sentinel.signal_scorecard")
@@ -116,8 +118,24 @@ def compute_baseline(sizes: dict[tuple[str, str, str], list[float]]) -> dict[str
     return {horizon: median(values) for horizon, values in by_horizon.items() if values}
 
 
+# Most pairs kept per (source, horizon) for the median. Move rates and the
+# min_samples check always use every pair; only the median is taken from an
+# evenly spaced subsample once a group is bigger than this.
+MAX_BASELINE_VALUES = 200_000
+
+
+def _strided(chunk: np.ndarray, stride: int, seen: int) -> tuple[np.ndarray, int]:
+    """Every `stride`-th value of a stream, given `seen` values came before
+    this chunk. Returns the kept values and the new running count."""
+    start = (-seen) % stride
+    return chunk[start::stride], seen + chunk.size
+
+
 def compute_random_baseline_stats(
-    db: Database, instruments: set[tuple[str, str]], min_samples: int = 5
+    db: Database,
+    instruments: set[tuple[str, str]],
+    min_samples: int = 5,
+    max_values: int = MAX_BASELINE_VALUES,
 ) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
     """True random-window baseline: from `price_samples` pairs (see
     `price_followup.random_window_effect_sizes`), partitioned by
@@ -130,19 +148,41 @@ def compute_random_baseline_stats(
     movement looks like for a liquid futures instrument. A (source,
     horizon) is included only once it has at least `min_samples` pooled
     data points — otherwise `build_scorecard()` falls back to the
-    pooled-proxy baseline for that (source, horizon)."""
-    by_source_horizon: dict[tuple[str, str], list[float]] = defaultdict(list)
-    for source, instrument in instruments:
-        samples = _baseline_samples(db, source, instrument)
-        for column, horizon_minutes in HORIZON_MINUTES:
-            by_source_horizon[(source, column)].extend(
-                random_window_effect_sizes(samples, horizon_minutes)
-            )
+    pooled-proxy baseline for that (source, horizon).
+
+    Two passes so memory stays bounded (1.4M Kalshi samples OOM-killed the
+    one-list version on 2026-11-07): the first counts pairs and moves, the
+    second keeps an evenly spaced subsample of at most `max_values` per
+    (source, horizon) for the median."""
+    ordered = sorted(instruments)
+
+    def chunks():
+        for source, instrument in ordered:
+            samples = _baseline_samples(db, source, instrument)
+            for column, horizon_minutes in HORIZON_MINUTES:
+                for chunk in iter_random_window_effects(samples, horizon_minutes):
+                    yield (source, column), chunk
+
+    totals: dict[tuple[str, str], int] = defaultdict(int)
+    moved: dict[tuple[str, str], int] = defaultdict(int)
+    for key, chunk in chunks():
+        totals[key] += chunk.size
+        moved[key] += int(np.count_nonzero(chunk))
+
+    wanted = {key: n for key, n in totals.items() if n >= min_samples}
+    strides = {key: max(1, -(-n // max_values)) for key, n in wanted.items()}
+    kept: dict[tuple[str, str], list[np.ndarray]] = defaultdict(list)
+    seen: dict[tuple[str, str], int] = defaultdict(int)
+    for key, chunk in chunks():
+        if key not in wanted:
+            continue
+        values, seen[key] = _strided(chunk, strides[key], seen[key])
+        kept[key].append(values)
+
     medians, move_rates = {}, {}
-    for key, values in by_source_horizon.items():
-        if len(values) >= min_samples:
-            medians[key] = median(values)
-            move_rates[key] = _move_rate(values)
+    for key, n in wanted.items():
+        medians[key] = float(np.median(np.concatenate(kept[key])))
+        move_rates[key] = moved[key] / n
     return medians, move_rates
 
 

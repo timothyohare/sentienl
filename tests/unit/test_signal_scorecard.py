@@ -341,3 +341,42 @@ class TestRandomMoveRate:
             random_move_rate={("futures_oil", "price_t15"): 0.99})[0]
         assert entry["baseline_source"] == "random_window"
         assert entry["beats_baseline"] is True
+
+
+class TestRandomBaselineMemoryCap:
+    """2026-11-07: 1.4M Kalshi price_samples made the pooled pair list too big
+    to fit in memory (the process was OOM-killed). Move rates must stay exact;
+    the median may come from an evenly spaced subsample of at most
+    `max_values` pairs."""
+
+    def _seed(self, db, n=40):
+        # 15-min samples, price steps up every 4th sample -> 39 t15 pairs, 9 moved
+        for i in range(n):
+            db.price_samples.insert("kalshi", "T1", 100.0 + i // 4, sampled_at=_ts(i * 15))
+
+    def test_move_rate_exact_under_cap(self, tmp_db):
+        self._seed(tmp_db)
+        _, full = compute_random_baseline_stats(tmp_db, {("kalshi", "T1")})
+        _, capped = compute_random_baseline_stats(tmp_db, {("kalshi", "T1")}, max_values=7)
+        assert capped[("kalshi", "price_t15")] == full[("kalshi", "price_t15")]
+        assert full[("kalshi", "price_t15")] == pytest.approx(9 / 39)
+
+    def test_median_from_subsample_under_cap(self, tmp_db):
+        self._seed(tmp_db)
+        medians, _ = compute_random_baseline_stats(tmp_db, {("kalshi", "T1")}, max_values=7)
+        assert medians[("kalshi", "price_t15")] == pytest.approx(0.0)
+
+    def test_min_samples_counts_all_pairs_not_the_subsample(self, tmp_db):
+        self._seed(tmp_db)
+        medians, _ = compute_random_baseline_stats(
+            tmp_db, {("kalshi", "T1")}, min_samples=20, max_values=7)
+        assert ("kalshi", "price_t15") in medians
+
+    def test_subsample_is_evenly_spread(self):
+        import numpy as np
+
+        from sentinel.scripts.signal_scorecard import _strided
+        kept, offset = _strided(np.arange(10.0), stride=3, seen=0)
+        assert kept.tolist() == [0.0, 3.0, 6.0, 9.0] and offset == 10
+        kept, offset = _strided(np.arange(10.0, 15.0), stride=3, seen=offset)
+        assert kept.tolist() == [12.0] and offset == 15
